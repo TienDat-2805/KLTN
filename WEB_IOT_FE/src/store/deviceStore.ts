@@ -123,6 +123,14 @@ export type DiscoverableDevice = {
   lastSpreadingFactor?: number | null;
   lastBatteryPct?: number | null;
   lastUplinkCounter?: number | null;
+
+  claimable?: boolean;
+  claimedByCurrentUser?: boolean;
+  claimedByOtherUser?: boolean;
+  claimStatusLabel?:
+    | "AVAILABLE"
+    | "CLAIMED_BY_CURRENT_USER"
+    | "CLAIMED_BY_OTHER_USER";
 };
 
 type PendingRuntime = {

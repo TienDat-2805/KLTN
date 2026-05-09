@@ -44,6 +44,29 @@ function mapTelemetry(t: LatestTelemetry | null) {
   };
 }
 
+function mapDiscoverDevice<T extends { userId: string | null }>(
+  device: T,
+  currentUserId: string,
+) {
+  const { userId, ...safeDevice } = device;
+
+  const claimedByCurrentUser = userId === currentUserId;
+  const claimedByOtherUser = Boolean(userId && userId !== currentUserId);
+  const claimable = !userId;
+
+  return {
+    ...safeDevice,
+    claimable,
+    claimedByCurrentUser,
+    claimedByOtherUser,
+    claimStatusLabel: claimedByOtherUser
+      ? "CLAIMED_BY_OTHER_USER"
+      : claimedByCurrentUser
+        ? "CLAIMED_BY_CURRENT_USER"
+        : "AVAILABLE",
+  };
+}
+
 function getConnectionTypeFromMethod(method: DiscoverMethod) {
   if (method === "wired") return ConnectionType.WIRED;
   if (method === "wifi") return ConnectionType.WIFI;
@@ -52,6 +75,7 @@ function getConnectionTypeFromMethod(method: DiscoverMethod) {
 
 const baseDeviceSelect = {
   id: true,
+  userId: true,
   deviceUid: true,
   devEui: true,
   name: true,
@@ -149,6 +173,7 @@ devicesRouter.get("/", async (req, res) => {
 });
 
 devicesRouter.get("/discover", async (req, res) => {
+  const userId = req.user!.id;
   const method = discoverMethodFromQuery(req.query.method);
 
   if (!method) {
@@ -161,15 +186,15 @@ devicesRouter.get("/discover", async (req, res) => {
 
   const devices = await prisma.device.findMany({
     where: {
-      userId: null,
       connectionType,
-      status: { not: DeviceStatus.OFFLINE },
     },
     orderBy: { updatedAt: "desc" },
     select: baseDeviceSelect,
   });
 
-  return res.json({ devices });
+  return res.json({
+    devices: devices.map((device) => mapDiscoverDevice(device, userId)),
+  });
 });
 
 devicesRouter.post("/claim", async (req, res) => {
@@ -195,6 +220,7 @@ devicesRouter.post("/claim", async (req, res) => {
   });
 
   if (!found) return res.status(404).json({ error: "Device not found" });
+
   if (found.userId) {
     return res.status(400).json({ error: "Device already claimed" });
   }
@@ -204,10 +230,7 @@ devicesRouter.post("/claim", async (req, res) => {
     data: {
       userId,
       ...(nextName ? { name: nextName } : {}),
-      joinStatus:
-        found.connectionType === ConnectionType.LPWAN
-          ? DeviceJoinStatus.CLAIMED
-          : DeviceJoinStatus.UNCLAIMED,
+      joinStatus: DeviceJoinStatus.CLAIMED,
     },
     select: baseDeviceSelect,
   });
@@ -269,6 +292,7 @@ devicesRouter.post("/claim-wifi", async (req, res) => {
     data: {
       userId,
       name: nextName,
+      joinStatus: DeviceJoinStatus.CLAIMED,
     },
     select: baseDeviceSelect,
   });
@@ -394,7 +418,10 @@ devicesRouter.post("/claim-wired", async (req, res) => {
 
   const updated = await prisma.device.update({
     where: { id: found.id },
-    data: { userId },
+    data: {
+      userId,
+      joinStatus: DeviceJoinStatus.CLAIMED,
+    },
     select: baseDeviceSelect,
   });
 
@@ -587,10 +614,9 @@ devicesRouter.delete("/:id", async (req, res) => {
     where: { id: existing.id },
     data: {
       userId: null,
-      joinStatus:
-        existing.connectionType === ConnectionType.LPWAN
-          ? DeviceJoinStatus.UNCLAIMED
-          : DeviceJoinStatus.UNCLAIMED,
+      joinStatus: DeviceJoinStatus.UNCLAIMED,
+      status: DeviceStatus.OFFLINE,
+      lastSeenAt: null,
     },
     select: { id: true },
   });

@@ -155,12 +155,16 @@ async function chooseLpwan() {
 }
 
 function startWifiConnect(d: DiscoverableDevice) {
+  if (!canClaimDevice(d)) return;
+
   selectedWifiDevice.value = d;
   wifiDeviceName.value = (d.name ?? "").trim() || "";
   wifiActivationCode.value = "";
 }
 
 function startLpwanConnect(d: DiscoverableDevice) {
+  if (!canClaimDevice(d)) return;
+
   selectedLpwanDevice.value = d;
   lpwanDeviceName.value = (d.name ?? "").trim() || "";
   lpwanActivationCode.value = "";
@@ -168,6 +172,7 @@ function startLpwanConnect(d: DiscoverableDevice) {
 
 async function connectWired(d: DiscoverableDevice) {
   if (!d?.deviceUid) return;
+  if (!canClaimDevice(d)) return;
   if (busyConnectWiredUid.value) return;
 
   busyConnectWiredUid.value = d.deviceUid;
@@ -190,6 +195,7 @@ async function connectWired(d: DiscoverableDevice) {
 async function connectWifi() {
   const d = selectedWifiDevice.value;
   if (!d?.deviceUid) return;
+  if (!canClaimDevice(d)) return;
   if (busyConnectWifiUid.value) return;
 
   busyConnectWifiUid.value = d.deviceUid;
@@ -222,6 +228,7 @@ async function connectWifi() {
 async function connectLpwan() {
   const d = selectedLpwanDevice.value;
   if (!d?.devEui) return;
+  if (!canClaimDevice(d)) return;
   if (busyConnectLpwanDevEui.value) return;
 
   busyConnectLpwanDevEui.value = d.devEui;
@@ -261,6 +268,36 @@ function statusClass(status: string) {
   }
 
   return "bg-red-50 text-red-700 ring-red-200";
+}
+
+function claimStatusClass(d: DiscoverableDevice) {
+  if (d.claimedByOtherUser) {
+    return "bg-red-50 text-red-700 ring-red-200";
+  }
+
+  if (d.claimedByCurrentUser) {
+    return "bg-blue-50 text-blue-700 ring-blue-200";
+  }
+
+  return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+}
+
+function claimStatusText(d: DiscoverableDevice) {
+  if (d.claimedByOtherUser) return "Đã kết nối bởi tài khoản khác";
+  if (d.claimedByCurrentUser) return "Đã có trong hệ thống của bạn";
+  return "Có thể kết nối";
+}
+
+function canClaimDevice(d: DiscoverableDevice) {
+  return (
+    d.claimable !== false && !d.claimedByOtherUser && !d.claimedByCurrentUser
+  );
+}
+
+function actionText(d: DiscoverableDevice, defaultText: string) {
+  if (d.claimedByOtherUser) return "Unavailable";
+  if (d.claimedByCurrentUser) return "Connected";
+  return defaultText;
 }
 </script>
 
@@ -335,6 +372,7 @@ function statusClass(status: string) {
           >
             <span class="text-lg font-black">W</span>
           </div>
+
           <span
             v-if="mode === 'wired'"
             class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
@@ -365,6 +403,7 @@ function statusClass(status: string) {
           >
             <span class="text-lg font-black">Wi</span>
           </div>
+
           <span
             v-if="mode === 'wifi'"
             class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
@@ -395,6 +434,7 @@ function statusClass(status: string) {
           >
             <span class="text-lg font-black">LP</span>
           </div>
+
           <span
             v-if="mode === 'lpwan'"
             class="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-bold text-violet-700 ring-1 ring-inset ring-violet-200"
@@ -455,11 +495,19 @@ function statusClass(status: string) {
                 <p class="text-sm font-bold text-slate-900">
                   {{ d.name || d.type }}
                 </p>
+
                 <span
                   class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                   :class="statusClass(d.status)"
                 >
                   {{ d.status }}
+                </span>
+
+                <span
+                  class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
+                  :class="claimStatusClass(d)"
+                >
+                  {{ claimStatusText(d) }}
                 </span>
               </div>
 
@@ -479,12 +527,19 @@ function statusClass(status: string) {
               type="button"
               class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
               :disabled="
-                d.status === 'OFFLINE' || busyConnectWiredUid === d.deviceUid
+                d.status === 'OFFLINE' ||
+                !canClaimDevice(d) ||
+                busyConnectWiredUid === d.deviceUid
               "
               @click="connectWired(d)"
             >
               {{
-                busyConnectWiredUid === d.deviceUid ? "Connecting…" : "Connect"
+                actionText(
+                  d,
+                  busyConnectWiredUid === d.deviceUid
+                    ? "Connecting…"
+                    : "Connect",
+                )
               }}
             </button>
           </li>
@@ -540,11 +595,19 @@ function statusClass(status: string) {
                   <p class="text-sm font-bold text-slate-900">
                     {{ d.name || d.type }}
                   </p>
+
                   <span
                     class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                     :class="statusClass(d.status)"
                   >
                     {{ d.status }}
+                  </span>
+
+                  <span
+                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
+                    :class="claimStatusClass(d)"
+                  >
+                    {{ claimStatusText(d) }}
                   </span>
                 </div>
 
@@ -556,10 +619,10 @@ function statusClass(status: string) {
               <button
                 type="button"
                 class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                :disabled="d.status === 'OFFLINE'"
+                :disabled="d.status === 'OFFLINE' || !canClaimDevice(d)"
                 @click="startWifiConnect(d)"
               >
-                Connect
+                {{ actionText(d, "Connect") }}
               </button>
             </div>
 
@@ -605,6 +668,7 @@ function statusClass(status: string) {
                   >
                     Cancel
                   </button>
+
                   <button
                     type="submit"
                     :disabled="busyConnectWifiUid === d.deviceUid"
@@ -660,7 +724,7 @@ function statusClass(status: string) {
           v-else-if="lpwanDevices.length === 0"
           class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500"
         >
-          No unclaimed LPWAN devices found. Run
+          No LPWAN devices found. Run
           <span class="font-mono font-semibold">npm run sim:lpwan</span>
           first, then click Refresh.
         </p>
@@ -691,6 +755,13 @@ function statusClass(status: string) {
                     :class="statusClass(d.status)"
                   >
                     {{ d.status }}
+                  </span>
+
+                  <span
+                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
+                    :class="claimStatusClass(d)"
+                  >
+                    {{ claimStatusText(d) }}
                   </span>
                 </div>
 
@@ -727,10 +798,10 @@ function statusClass(status: string) {
               <button
                 type="button"
                 class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                :disabled="!d.devEui"
+                :disabled="!d.devEui || !canClaimDevice(d)"
                 @click="startLpwanConnect(d)"
               >
-                Claim
+                {{ actionText(d, "Claim") }}
               </button>
             </div>
 
