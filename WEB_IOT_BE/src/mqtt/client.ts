@@ -86,8 +86,10 @@ export function startMqtt() {
 
 export async function publishDeviceCommand(uid: string, command: unknown) {
   if (!client || !client.connected) throw new Error("MQTT unavailable");
+
   const safeUid = (uid ?? "").trim();
   if (!safeUid) throw new Error("Invalid uid");
+
   const topic = `iot/devices/${safeUid}/cmd`;
   const payload = JSON.stringify(command ?? {});
 
@@ -97,6 +99,30 @@ export async function publishDeviceCommand(uid: string, command: unknown) {
       else resolve();
     });
   });
+
+  console.log(`MQTT command published: ${topic} ${payload}`);
+}
+
+export async function publishLpwanDownlink(devEui: string, command: unknown) {
+  if (!client || !client.connected) throw new Error("MQTT unavailable");
+
+  const safeDevEui = (devEui ?? "").trim().toUpperCase();
+
+  if (!safeDevEui) {
+    throw new Error("Invalid devEui");
+  }
+
+  const topic = `lpwan/downlink/${safeDevEui}`;
+  const payload = JSON.stringify(command ?? {});
+
+  await new Promise<void>((resolve, reject) => {
+    client?.publish(topic, payload, { qos: 0 }, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
+  console.log(`LPWAN downlink published: ${topic} ${payload}`);
 }
 
 export async function stopMqtt() {

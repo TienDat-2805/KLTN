@@ -81,6 +81,31 @@ const latestTelemetry = computed<TelemetryPoint | null>(
   () => device.value?.latestTelemetry ?? null,
 );
 
+const isLpwanDevice = computed(() => {
+  const d = device.value;
+  if (!d) return false;
+
+  return (
+    d.connectionType === "LPWAN" ||
+    Boolean(d.devEui) ||
+    (d.deviceUid ?? "").toUpperCase().startsWith("LPWAN_")
+  );
+});
+
+const lpwanUplinkEnabled = computed(() => {
+  const d = device.value;
+  if (!d) return false;
+
+  return store.lpwanUplinkEnabledByDeviceId[d.id] ?? d.status !== "OFFLINE";
+});
+
+const lpwanControlBusy = computed(() => {
+  const d = device.value;
+  if (!d) return false;
+
+  return store.isLpwanBusy(d.id);
+});
+
 type DeviceKind =
   | "temperature"
   | "humidity"
@@ -343,6 +368,16 @@ function fmtNumber(v: number | null | undefined, digits = 2) {
 
 function backToDevices() {
   router.push("/app/devices");
+}
+
+async function toggleLpwanUplink() {
+  const d = device.value;
+  if (!d) return;
+
+  await store.setLpwanEnabled({
+    id: d.id,
+    enabled: !lpwanUplinkEnabled.value,
+  });
 }
 
 const chartEl = ref<HTMLCanvasElement | null>(null);
@@ -708,6 +743,44 @@ onBeforeUnmount(() => {
               </p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section
+        v-if="isLpwanDevice"
+        class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <h3 class="text-base font-bold text-slate-900">
+              LPWAN uplink control
+            </h3>
+            <p
+              class="mt-1 text-sm font-semibold"
+              :class="
+                lpwanUplinkEnabled ? 'text-emerald-600' : 'text-slate-500'
+              "
+            >
+              {{ lpwanUplinkEnabled ? "ENABLED" : "DISABLED" }}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            :disabled="lpwanControlBusy"
+            @click="toggleLpwanUplink"
+          >
+            {{
+              lpwanControlBusy
+                ? "Sending..."
+                : lpwanUplinkEnabled
+                  ? "Disable uplink"
+                  : "Enable uplink"
+            }}
+          </button>
         </div>
       </section>
 

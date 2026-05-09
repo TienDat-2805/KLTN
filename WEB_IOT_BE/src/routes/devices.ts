@@ -3,7 +3,7 @@ import { ConnectionType, DeviceJoinStatus, DeviceStatus } from "@prisma/client";
 
 import { prisma } from "../db/prisma";
 import { requireAuth } from "../middleware/requireAuth";
-import { publishDeviceCommand } from "../mqtt/client";
+import { publishDeviceCommand, publishLpwanDownlink } from "../mqtt/client";
 import { getIO, userRoom } from "../realtime/io";
 
 type DiscoverMethod = "wired" | "wifi" | "lpwan";
@@ -502,7 +502,12 @@ devicesRouter.post("/:id/control/light", async (req, res) => {
 
   const device = await prisma.device.findFirst({
     where: { id: deviceId, userId },
-    select: { id: true, deviceUid: true, type: true },
+    select: {
+      id: true,
+      deviceUid: true,
+      type: true,
+      status: true,
+    },
   });
 
   if (!device) return res.status(404).json({ error: "Device not found" });
@@ -511,24 +516,23 @@ devicesRouter.post("/:id/control/light", async (req, res) => {
     return res.status(400).json({ error: "Device is not Light" });
   }
 
+  if (device.status === DeviceStatus.OFFLINE) {
+    return res.status(400).json({ error: "Device is offline" });
+  }
+
   try {
-    await publishDeviceCommand(device.deviceUid, { type: "light:set", on });
+    await publishDeviceCommand(device.deviceUid, {
+      type: "light:set",
+      on,
+    });
   } catch {
     return res.status(503).json({ error: "MQTT unavailable" });
   }
 
-  await prisma.device.update({
-    where: { id: device.id },
-    data: { lightOn: on },
-    select: { id: true },
+  return res.status(202).json({
+    ok: true,
+    message: "Command sent to device. Waiting for runtime update.",
   });
-
-  getIO()?.to(userRoom(userId)).emit("device:runtime", {
-    deviceId: device.id,
-    lightOn: on,
-  });
-
-  return res.status(202).json({ ok: true });
 });
 
 devicesRouter.post("/:id/control/ac", async (req, res) => {
@@ -555,7 +559,12 @@ devicesRouter.post("/:id/control/ac", async (req, res) => {
 
   const device = await prisma.device.findFirst({
     where: { id: deviceId, userId },
-    select: { id: true, deviceUid: true, type: true },
+    select: {
+      id: true,
+      deviceUid: true,
+      type: true,
+      status: true,
+    },
   });
 
   if (!device) return res.status(404).json({ error: "Device not found" });
@@ -564,9 +573,14 @@ devicesRouter.post("/:id/control/ac", async (req, res) => {
     return res.status(400).json({ error: "Device is not Air Conditioner" });
   }
 
+  if (device.status === DeviceStatus.OFFLINE) {
+    return res.status(400).json({ error: "Device is offline" });
+  }
+
   const command: Record<string, unknown> = { type: "ac:set" };
+
   if (hasOn) command.on = on;
-  if (hasTarget) command.targetTempC = targetTempC;
+  if (hasTarget) command.targetTempC = Math.round(targetTempC as number);
 
   try {
     await publishDeviceCommand(device.deviceUid, command);
@@ -574,26 +588,58 @@ devicesRouter.post("/:id/control/ac", async (req, res) => {
     return res.status(503).json({ error: "MQTT unavailable" });
   }
 
-  await prisma.device.update({
-    where: { id: device.id },
-    data: {
-      ...(hasOn ? { acOn: on as boolean } : {}),
-      ...(hasTarget
-        ? { acTargetTempC: Math.round(targetTempC as number) }
-        : {}),
+  return res.status(202).json({
+    ok: true,
+    message: "Command sent to device. Waiting for runtime update.",
+  });
+});
+
+devicesRouter.post("/:id/control/lpwan", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+  const { enabled } = (req.body ?? {}) as { enabled?: unknown };
+
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "Invalid enabled" });
+  }
+
+  const device = await prisma.device.findFirst({
+    where: {
+      id: deviceId,
+      userId,
+      connectionType: ConnectionType.LPWAN,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      devEui: true,
+      connectionType: true,
+      status: true,
+    },
   });
 
-  getIO()
-    ?.to(userRoom(userId))
-    .emit("device:runtime", {
-      deviceId: device.id,
-      ...(hasOn ? { acOn: on as boolean } : {}),
-      ...(hasTarget ? { acTargetTempC: targetTempC as number } : {}),
-    });
+  if (!device) {
+    return res.status(404).json({ error: "LPWAN device not found" });
+  }
 
-  return res.status(202).json({ ok: true });
+  if (!device.devEui) {
+    return res.status(400).json({ error: "LPWAN device missing devEui" });
+  }
+
+  try {
+    await publishLpwanDownlink(device.devEui, {
+      type: "lpwan:set",
+      enabled,
+    });
+  } catch {
+    return res.status(503).json({ error: "MQTT unavailable" });
+  }
+
+  return res.status(202).json({
+    ok: true,
+    message: enabled
+      ? "LPWAN enable command sent. Waiting for next uplink."
+      : "LPWAN disable command sent. Device will stop sending uplinks.",
+  });
 });
 
 devicesRouter.delete("/:id", async (req, res) => {

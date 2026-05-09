@@ -35,19 +35,43 @@ function normalizeNetworkType(value: unknown): NetworkType {
   const normalized = value.trim().toUpperCase().replace("-", "_");
   if (normalized === "NB_IOT") return NetworkType.NB_IOT;
   if (normalized === "LTE_M") return NetworkType.LTE_M;
+
   return NetworkType.LORAWAN;
+}
+
+function normalizeDevEui(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function shortDevEui(devEui: string) {
+  const safe = normalizeDevEui(devEui).replace(/[^A-Z0-9]/g, "");
+  return safe.slice(-6) || "UNKNOWN";
+}
+
+function buildAutoDeviceUid(devEui: string) {
+  return `LPWAN_${shortDevEui(devEui)}`;
+}
+
+function buildAutoActivationCode(devEui: string) {
+  return `LP-${shortDevEui(devEui)}`;
+}
+
+function buildAutoDeviceName(devEui: string) {
+  return `LPWAN Device ${shortDevEui(devEui)}`;
 }
 
 function parseLpwanUplink(raw: unknown, topicDevEui?: string) {
   const body = (raw ?? {}) as LpwanUplinkPayload;
   const payload = (body.payload ?? {}) as Record<string, unknown>;
 
-  const devEui =
+  const devEuiRaw =
     typeof body.devEui === "string" && body.devEui.trim()
       ? body.devEui.trim()
       : topicDevEui?.trim();
 
-  if (!devEui) throw new Error("Missing devEui");
+  if (!devEuiRaw) throw new Error("Missing devEui");
+
+  const devEui = normalizeDevEui(devEuiRaw);
 
   const gatewayId =
     typeof body.gatewayId === "string" && body.gatewayId.trim()
@@ -56,7 +80,10 @@ function parseLpwanUplink(raw: unknown, topicDevEui?: string) {
 
   const tsRaw = body.ts;
   const ts = tsRaw ? new Date(tsRaw as string | number | Date) : new Date();
-  if (Number.isNaN(ts.getTime())) throw new Error("Invalid ts");
+
+  if (Number.isNaN(ts.getTime())) {
+    throw new Error("Invalid ts");
+  }
 
   const temperatureC = isFiniteNumber(payload.temperatureC)
     ? payload.temperatureC
@@ -70,10 +97,13 @@ function parseLpwanUplink(raw: unknown, topicDevEui?: string) {
       ? payload.humidity
       : undefined;
 
-  if (!isFiniteNumber(temperatureC))
+  if (!isFiniteNumber(temperatureC)) {
     throw new Error("Invalid payload.temperatureC");
-  if (!isFiniteNumber(humidityPct))
+  }
+
+  if (!isFiniteNumber(humidityPct)) {
     throw new Error("Invalid payload.humidityPct");
+  }
 
   const rssi = isFiniteNumber(body.rssi) ? body.rssi : undefined;
   const snr = isFiniteNumber(body.snr) ? body.snr : undefined;
@@ -113,7 +143,7 @@ export async function handleLpwanUplink(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const device = await tx.device.findUnique({
+      let device = await tx.device.findUnique({
         where: { devEui: uplink.devEui },
         select: {
           id: true,
@@ -125,8 +155,48 @@ export async function handleLpwanUplink(
       });
 
       if (!device) {
-        console.warn(`LPWAN uplink ignored. Unknown DevEUI: ${uplink.devEui}`);
-        return null;
+        const created = await tx.device.create({
+          data: {
+            deviceUid: buildAutoDeviceUid(uplink.devEui),
+            devEui: uplink.devEui,
+            activationCode: buildAutoActivationCode(uplink.devEui),
+            userId: null,
+
+            name: buildAutoDeviceName(uplink.devEui),
+            type: "Temperature",
+            model: "LORA-AUTO",
+
+            connectionType: ConnectionType.LPWAN,
+            networkType: uplink.networkType,
+            joinStatus: DeviceJoinStatus.UNCLAIMED,
+
+            status,
+            lastSeenAt: uplink.ts,
+            lastJoinAt: uplink.ts,
+
+            gatewayId: uplink.gatewayId,
+            lastRssi: uplink.rssi,
+            lastSnr: uplink.snr,
+            lastSpreadingFactor: uplink.spreadingFactor,
+            lastBatteryPct: uplink.batteryPct,
+            lastUplinkCounter: uplink.uplinkCounter,
+          },
+          select: {
+            id: true,
+            userId: true,
+            devEui: true,
+            deviceUid: true,
+            name: true,
+          },
+        });
+
+        device = created;
+
+        console.log(
+          `LPWAN device auto-created: ${created.deviceUid} / DevEUI ${created.devEui} / activation ${buildAutoActivationCode(
+            uplink.devEui,
+          )}`,
+        );
       }
 
       const telemetry = await tx.telemetry.create({
@@ -162,11 +232,13 @@ export async function handleLpwanUplink(
           status,
           lastSeenAt: uplink.ts,
           lastJoinAt: uplink.ts,
+
           connectionType: ConnectionType.LPWAN,
           networkType: uplink.networkType,
           joinStatus: device.userId
             ? DeviceJoinStatus.CLAIMED
             : DeviceJoinStatus.UNCLAIMED,
+
           gatewayId: uplink.gatewayId,
           lastRssi: uplink.rssi,
           lastSnr: uplink.snr,
@@ -233,6 +305,7 @@ export async function handleLpwanUplink(
     if (err instanceof Prisma.PrismaClientInitializationError) {
       throw new Error("Database unavailable");
     }
+
     throw err;
   }
 }

@@ -163,6 +163,8 @@ export const useDeviceStore = defineStore("device", {
       runtimeWindowByDeviceId: {} as Record<string, RuntimePoint[]>,
       cameraFrameWindowByDeviceId: {} as Record<string, CameraFramePoint[]>,
       pendingRuntimeByDeviceId: {} as Record<string, PendingRuntime>,
+      lpwanUplinkEnabledByDeviceId: {} as Record<string, boolean>,
+      lpwanBusyByDeviceId: {} as Record<string, boolean>,
       notifications: [] as DeviceNotification[],
       relativeTimeTick: 0,
       loading: false,
@@ -186,6 +188,8 @@ export const useDeviceStore = defineStore("device", {
       state.pendingRuntimeByDeviceId[deviceId]?.acOn !== undefined,
     isAcTargetBusy: (state) => (deviceId: string) =>
       state.pendingRuntimeByDeviceId[deviceId]?.acTargetTempC !== undefined,
+    isLpwanBusy: (state) => (deviceId: string) =>
+      state.lpwanBusyByDeviceId[deviceId] === true,
   },
   actions: {
     pushNotification(
@@ -284,6 +288,12 @@ export const useDeviceStore = defineStore("device", {
           }
           if (!this.cameraFrameWindowByDeviceId[d.id]) {
             this.cameraFrameWindowByDeviceId[d.id] = [];
+          }
+          if (
+            d.connectionType === "LPWAN" &&
+            this.lpwanUplinkEnabledByDeviceId[d.id] === undefined
+          ) {
+            this.lpwanUplinkEnabledByDeviceId[d.id] = d.status !== "OFFLINE";
           }
         }
       } catch (err) {
@@ -406,6 +416,15 @@ export const useDeviceStore = defineStore("device", {
       const prevStatus = device.status;
       device.status = payload.status;
       device.lastSeenAt = payload.lastSeenAt;
+      if (device.connectionType === "LPWAN") {
+        if (payload.status === "OFFLINE") {
+          this.lpwanUplinkEnabledByDeviceId[device.id] = false;
+        }
+
+        if (payload.status === "ONLINE" || payload.status === "WARNING") {
+          this.lpwanUplinkEnabledByDeviceId[device.id] = true;
+        }
+      }
       if (payload.status === "WARNING" && prevStatus !== "WARNING") {
         const label = (device.name ?? "").trim() || device.type;
         this.pushNotification({
@@ -814,6 +833,49 @@ export const useDeviceStore = defineStore("device", {
             ? err.message
             : "Failed to control air conditioner";
         return false;
+      }
+    },
+    async setLpwanEnabled(input: { id: string; enabled: boolean }) {
+      const auth = useAuthStore();
+
+      if (!auth.accessToken) return false;
+      if (!input?.id) return false;
+
+      this.error = null;
+
+      const device = this.devices.find((d) => d.id === input.id);
+
+      if (!device || device.connectionType !== "LPWAN") {
+        this.error = "Device is not an LPWAN device";
+        return false;
+      }
+
+      const previous = this.lpwanUplinkEnabledByDeviceId[input.id];
+
+      this.lpwanBusyByDeviceId[input.id] = true;
+      this.lpwanUplinkEnabledByDeviceId[input.id] = input.enabled;
+
+      try {
+        await apiRequest(`/devices/${input.id}/control/lpwan`, {
+          method: "POST",
+          token: auth.accessToken,
+          body: { enabled: input.enabled },
+        });
+
+        return true;
+      } catch (err) {
+        if (previous === undefined) {
+          delete this.lpwanUplinkEnabledByDeviceId[input.id];
+        } else {
+          this.lpwanUplinkEnabledByDeviceId[input.id] = previous;
+        }
+
+        this.error =
+          err instanceof Error ? err.message : "Failed to control LPWAN device";
+
+        return false;
+      } finally {
+        this.lpwanBusyByDeviceId[input.id] = false;
       }
     },
   },
