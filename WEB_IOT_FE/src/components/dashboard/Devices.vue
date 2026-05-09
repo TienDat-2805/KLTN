@@ -2,6 +2,12 @@
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 
+import {
+  ArrowPathIcon,
+  CpuChipIcon,
+  PlusIcon,
+} from "@heroicons/vue/24/outline";
+
 import DeviceTable, { type DeviceRow } from "./DeviceTable.vue";
 import { useDeviceStore } from "../../store/deviceStore";
 
@@ -15,32 +21,12 @@ function connectionLabel(connectionType: string | undefined) {
   return "—";
 }
 
-function lpwanMeta(d: ReturnType<typeof useDeviceStore>["devices"][number]) {
-  if (d.connectionType !== "LPWAN") return "";
-
-  const parts = [
-    d.networkType || "LORAWAN",
-    d.gatewayId ? `Gateway ${d.gatewayId}` : "",
-    typeof d.lastRssi === "number" ? `RSSI ${Math.round(d.lastRssi)} dBm` : "",
-    typeof d.lastSnr === "number" ? `SNR ${d.lastSnr} dB` : "",
-    typeof d.lastSpreadingFactor === "number"
-      ? `SF${d.lastSpreadingFactor}`
-      : "",
-    typeof d.lastBatteryPct === "number"
-      ? `Battery ${Math.round(d.lastBatteryPct)}%`
-      : "",
-  ];
-
-  return parts.filter(Boolean).join(" · ");
-}
-
 const rows = computed<DeviceRow[]>(() => {
   return store.devices.map((d) => ({
     id: d.id,
     name: d.name,
     type: d.type,
     connection: connectionLabel(d.connectionType),
-    connectionDetail: lpwanMeta(d),
     status: d.status,
     lastUpdate: store.getLastUpdateLabel(d),
     spark: store
@@ -67,7 +53,103 @@ function onViewDevice(device: DeviceRow) {
 
 <template>
   <div class="space-y-6">
-    <p v-if="store.error" class="text-sm text-red-700">{{ store.error }}</p>
+    <section
+      class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"
+    >
+      <div>
+        <p class="text-sm font-bold uppercase tracking-wider text-blue-600">
+          Device Management
+        </p>
+        <h2 class="mt-1 text-2xl font-black tracking-tight text-slate-900">
+          Quản lý thiết bị
+        </h2>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+          @click="store.loadDevices()"
+        >
+          <ArrowPathIcon class="h-4 w-4" />
+          Làm mới
+        </button>
+
+        <RouterLink
+          to="/app/add-device"
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+        >
+          <PlusIcon class="h-4 w-4" />
+          Thêm thiết bị
+        </RouterLink>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold text-slate-500">Tổng thiết bị</p>
+            <p class="mt-2 text-3xl font-black text-slate-900">
+              {{ store.totalDevices }}
+            </p>
+          </div>
+          <div class="rounded-2xl bg-blue-50 p-3 text-blue-600">
+            <CpuChipIcon class="h-6 w-6" />
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold text-slate-500">Online</p>
+            <p class="mt-2 text-3xl font-black text-emerald-600">
+              {{ store.activeDevices }}
+            </p>
+          </div>
+          <div class="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
+            <span class="block h-6 w-6 rounded-full bg-emerald-500" />
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold text-slate-500">Offline</p>
+            <p class="mt-2 text-3xl font-black text-red-600">
+              {{ store.offlineDevices }}
+            </p>
+          </div>
+          <div class="rounded-2xl bg-red-50 p-3 text-red-600">
+            <span class="block h-6 w-6 rounded-full bg-red-500" />
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold text-slate-500">Cảnh báo</p>
+            <p class="mt-2 text-3xl font-black text-amber-600">
+              {{ store.alerts }}
+            </p>
+          </div>
+          <div class="rounded-2xl bg-amber-50 p-3 text-amber-600">
+            <span class="block h-6 w-6 rounded-full bg-amber-500" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p
+      v-if="store.error"
+      class="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600"
+    >
+      {{ store.error }}
+    </p>
+
     <DeviceTable
       :devices="rows"
       @view="onViewDevice"

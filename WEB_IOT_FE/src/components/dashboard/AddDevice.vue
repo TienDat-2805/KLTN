@@ -253,44 +253,52 @@ async function connectLpwan() {
 
 function statusClass(status: string) {
   if (status === "ONLINE") {
-    return "bg-green-50 text-green-700 ring-green-100";
+    return "bg-emerald-50 text-emerald-700 ring-emerald-200";
   }
 
   if (status === "WARNING") {
-    return "bg-yellow-50 text-yellow-800 ring-yellow-100";
+    return "bg-amber-50 text-amber-700 ring-amber-200";
   }
 
-  return "bg-red-50 text-red-700 ring-red-100";
+  return "bg-red-50 text-red-700 ring-red-200";
 }
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-5xl flex-col justify-center">
-    <div class="rounded-2xl bg-white p-6 shadow-sm">
-      <h2 class="text-base font-semibold text-gray-900">Add Device</h2>
-      <p class="mt-1 text-sm text-gray-500">
-        Choose how you want to find and connect your device.
-      </p>
+  <div class="mx-auto w-full max-w-6xl space-y-6">
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div
+        class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"
+      >
+        <div>
+          <p class="text-sm font-bold uppercase tracking-wider text-blue-600">
+            Device Registration
+          </p>
+          <h2 class="mt-1 text-2xl font-black tracking-tight text-slate-900">
+            Thêm thiết bị
+          </h2>
+        </div>
+      </div>
 
       <div
         v-if="noticeVisible"
-        class="mt-6 rounded-2xl border p-4"
+        class="mt-6 rounded-2xl border px-4 py-3"
         :class="
           error
             ? 'border-red-200 bg-red-50'
             : mode === 'lpwan'
-              ? 'border-blue-100 bg-blue-50'
-              : 'border-gray-100 bg-gray-50'
+              ? 'border-blue-200 bg-blue-50'
+              : 'border-emerald-200 bg-emerald-50'
         "
       >
         <p
-          class="text-sm font-semibold"
+          class="text-sm font-bold"
           :class="
             error
-              ? 'text-red-800'
+              ? 'text-red-700'
               : mode === 'lpwan'
-                ? 'text-blue-900'
-                : 'text-gray-900'
+                ? 'text-blue-800'
+                : 'text-emerald-800'
           "
         >
           {{ noticeTitle }}
@@ -299,127 +307,177 @@ function statusClass(status: string) {
           class="mt-1 text-sm"
           :class="
             error
-              ? 'text-red-700'
+              ? 'text-red-600'
               : mode === 'lpwan'
                 ? 'text-blue-700'
-                : 'text-gray-600'
+                : 'text-emerald-700'
           "
         >
           {{ noticeBody }}
         </p>
       </div>
+    </section>
 
-      <div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <button
-          type="button"
-          class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-gray-300"
-          :class="
-            mode === 'wired'
-              ? 'border-gray-900 ring-2 ring-gray-100'
-              : 'border-gray-200'
-          "
-          @click="chooseWired"
-        >
-          <p class="text-sm font-semibold text-gray-900">Find via cable</p>
-          <p class="mt-1 text-sm text-gray-500">
-            Show devices connected directly by Ethernet/cable.
-          </p>
-        </button>
-
-        <button
-          type="button"
-          class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-gray-300"
-          :class="
-            mode === 'wifi'
-              ? 'border-gray-900 ring-2 ring-gray-100'
-              : 'border-gray-200'
-          "
-          @click="chooseWifi"
-        >
-          <p class="text-sm font-semibold text-gray-900">Find on Wi-Fi</p>
-          <p class="mt-1 text-sm text-gray-500">
-            Show devices on the same Wi-Fi network.
-          </p>
-        </button>
-
-        <button
-          type="button"
-          class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-gray-300"
-          :class="
-            mode === 'lpwan'
-              ? 'border-blue-700 ring-2 ring-blue-100'
-              : 'border-gray-200'
-          "
-          @click="chooseLpwan"
-        >
-          <p class="text-sm font-semibold text-gray-900">Add LPWAN device</p>
-          <p class="mt-1 text-sm text-gray-500">
-            Claim LoRaWAN-like device by DevEUI and activation code.
-          </p>
-        </button>
-      </div>
-
-      <div
-        v-if="mode === 'wired'"
-        class="mt-6 rounded-2xl border border-gray-100 bg-gray-50 p-5"
+    <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <button
+        type="button"
+        class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+        :class="
+          mode === 'wired'
+            ? 'border-blue-300 ring-4 ring-blue-50'
+            : 'border-slate-200 hover:border-blue-200'
+        "
+        @click="chooseWired"
       >
         <div class="flex items-center justify-between gap-3">
+          <div
+            class="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700"
+          >
+            <span class="text-lg font-black">W</span>
+          </div>
+          <span
+            v-if="mode === 'wired'"
+            class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
+          >
+            Selected
+          </span>
+        </div>
+
+        <p class="mt-4 text-base font-bold text-slate-900">Find via cable</p>
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          Hiển thị thiết bị kết nối trực tiếp bằng Ethernet/cable.
+        </p>
+      </button>
+
+      <button
+        type="button"
+        class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+        :class="
+          mode === 'wifi'
+            ? 'border-blue-300 ring-4 ring-blue-50'
+            : 'border-slate-200 hover:border-blue-200'
+        "
+        @click="chooseWifi"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div
+            class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700"
+          >
+            <span class="text-lg font-black">Wi</span>
+          </div>
+          <span
+            v-if="mode === 'wifi'"
+            class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
+          >
+            Selected
+          </span>
+        </div>
+
+        <p class="mt-4 text-base font-bold text-slate-900">Find on Wi-Fi</p>
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          Tìm các thiết bị đang nằm trong cùng mạng Wi-Fi.
+        </p>
+      </button>
+
+      <button
+        type="button"
+        class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+        :class="
+          mode === 'lpwan'
+            ? 'border-blue-400 ring-4 ring-blue-50'
+            : 'border-slate-200 hover:border-blue-200'
+        "
+        @click="chooseLpwan"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div
+            class="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-700"
+          >
+            <span class="text-lg font-black">LP</span>
+          </div>
+          <span
+            v-if="mode === 'lpwan'"
+            class="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-bold text-violet-700 ring-1 ring-inset ring-violet-200"
+          >
+            Selected
+          </span>
+        </div>
+
+        <p class="mt-4 text-base font-bold text-slate-900">Add LPWAN device</p>
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          Claim thiết bị LoRaWAN-like bằng DevEUI và activation code.
+        </p>
+      </button>
+    </section>
+
+    <section
+      v-if="mode === 'wired'"
+      class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+    >
+      <div class="border-b border-slate-100 px-5 py-4">
+        <div class="flex items-center justify-between gap-3">
           <div>
-            <p class="text-sm font-semibold text-gray-900">Wired devices</p>
-            <p class="mt-1 text-xs text-gray-500">
+            <h3 class="text-base font-bold text-slate-900">Wired devices</h3>
+            <p class="mt-1 text-sm text-slate-500">
               Device must be online before it can be connected.
             </p>
           </div>
 
           <button
             type="button"
-            class="text-sm font-semibold text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+            class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             :disabled="loadingWired"
             @click="loadWired"
           >
             {{ loadingWired ? "Refreshing…" : "Refresh" }}
           </button>
         </div>
+      </div>
 
-        <p v-if="loadingWired" class="mt-3 text-sm text-gray-500">Scanning…</p>
+      <div class="p-5">
+        <p v-if="loadingWired" class="text-sm text-slate-500">Scanning…</p>
+
         <p
           v-else-if="wiredDevices.length === 0"
-          class="mt-3 text-sm text-gray-600"
+          class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500"
         >
           No wired devices found.
         </p>
 
-        <ul v-else class="mt-4 space-y-3">
+        <ul v-else class="space-y-3">
           <li
             v-for="d in wiredDevices"
             :key="d.id"
-            class="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm"
+            class="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
           >
             <div>
               <div class="flex flex-wrap items-center gap-2">
-                <p class="text-sm font-semibold text-gray-900">
+                <p class="text-sm font-bold text-slate-900">
                   {{ d.name || d.type }}
                 </p>
                 <span
-                  class="rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset"
+                  class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                   :class="statusClass(d.status)"
                 >
                   {{ d.status }}
                 </span>
               </div>
 
-              <p class="mt-0.5 text-xs text-gray-500">
+              <p class="mt-1 text-xs text-slate-500">
                 {{ d.deviceUid }} · {{ d.model }}
               </p>
 
-              <p v-if="d.status === 'OFFLINE'" class="mt-1 text-xs text-gray-400">
+              <p
+                v-if="d.status === 'OFFLINE'"
+                class="mt-1 text-xs text-slate-400"
+              >
                 Start MQTT simulator first to make this device online.
               </p>
             </div>
 
             <button
               type="button"
-              class="rounded-2xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
               :disabled="
                 d.status === 'OFFLINE' || busyConnectWiredUid === d.deviceUid
               "
@@ -432,65 +490,72 @@ function statusClass(status: string) {
           </li>
         </ul>
       </div>
+    </section>
 
-      <div
-        v-else-if="mode === 'wifi'"
-        class="mt-6 rounded-2xl border border-gray-100 bg-gray-50 p-5"
-      >
+    <section
+      v-else-if="mode === 'wifi'"
+      class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+    >
+      <div class="border-b border-slate-100 px-5 py-4">
         <div class="flex items-center justify-between gap-3">
           <div>
-            <p class="text-sm font-semibold text-gray-900">Wi-Fi devices</p>
-            <p class="mt-1 text-xs text-gray-500">
+            <h3 class="text-base font-bold text-slate-900">Wi-Fi devices</h3>
+            <p class="mt-1 text-sm text-slate-500">
               Select a discovered Wi-Fi device and enter its activation code.
             </p>
           </div>
 
           <button
             type="button"
-            class="text-sm font-semibold text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+            class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             :disabled="loadingWifi"
             @click="loadWifi"
           >
             {{ loadingWifi ? "Refreshing…" : "Refresh" }}
           </button>
         </div>
+      </div>
 
-        <p v-if="loadingWifi" class="mt-3 text-sm text-gray-500">Scanning…</p>
+      <div class="p-5">
+        <p v-if="loadingWifi" class="text-sm text-slate-500">Scanning…</p>
+
         <p
           v-else-if="wifiDevices.length === 0"
-          class="mt-3 text-sm text-gray-600"
+          class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500"
         >
           No Wi-Fi devices found.
         </p>
 
-        <ul v-else class="mt-4 space-y-3">
+        <ul v-else class="space-y-3">
           <li
             v-for="d in wifiDevices"
             :key="d.id"
-            class="rounded-2xl bg-white px-4 py-3 shadow-sm"
+            class="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4"
           >
-            <div class="flex items-center justify-between gap-3">
+            <div
+              class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+            >
               <div>
                 <div class="flex flex-wrap items-center gap-2">
-                  <p class="text-sm font-semibold text-gray-900">
+                  <p class="text-sm font-bold text-slate-900">
                     {{ d.name || d.type }}
                   </p>
                   <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset"
+                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                     :class="statusClass(d.status)"
                   >
                     {{ d.status }}
                   </span>
                 </div>
 
-                <p class="mt-0.5 text-xs text-gray-500">
+                <p class="mt-1 text-xs text-slate-500">
                   {{ d.deviceUid }} · {{ d.model }}
                 </p>
               </div>
 
               <button
                 type="button"
-                class="rounded-2xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                 :disabled="d.status === 'OFFLINE'"
                 @click="startWifiConnect(d)"
               >
@@ -500,15 +565,13 @@ function statusClass(status: string) {
 
             <div
               v-if="selectedWifiDevice?.deviceUid === d.deviceUid"
-              class="mt-4 rounded-2xl bg-gray-50 p-4"
+              class="mt-4 rounded-2xl border border-slate-200 bg-white p-4"
             >
-              <p class="text-sm font-semibold text-gray-900">
-                Enter device info
-              </p>
+              <p class="text-sm font-bold text-slate-900">Enter device info</p>
 
               <form class="mt-4 space-y-4" @submit.prevent="connectWifi">
                 <div>
-                  <label class="text-sm font-medium text-gray-700">
+                  <label class="text-sm font-semibold text-slate-700">
                     Device name
                   </label>
                   <input
@@ -516,12 +579,12 @@ function statusClass(status: string) {
                     required
                     type="text"
                     placeholder="e.g. Living Room Sensor"
-                    class="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300"
+                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
                   />
                 </div>
 
                 <div>
-                  <label class="text-sm font-medium text-gray-700">
+                  <label class="text-sm font-semibold text-slate-700">
                     Activation code
                   </label>
                   <input
@@ -530,14 +593,14 @@ function statusClass(status: string) {
                     type="text"
                     autocomplete="one-time-code"
                     placeholder="e.g. XYZ789"
-                    class="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300"
+                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
                   />
                 </div>
 
                 <div class="flex items-center justify-end gap-3 pt-1">
                   <button
                     type="button"
-                    class="text-sm font-semibold text-gray-700 hover:text-gray-900"
+                    class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
                     @click="selectedWifiDevice = null"
                   >
                     Cancel
@@ -545,7 +608,7 @@ function statusClass(status: string) {
                   <button
                     type="submit"
                     :disabled="busyConnectWifiUid === d.deviceUid"
-                    class="rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition enabled:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                   >
                     {{
                       busyConnectWifiUid === d.deviceUid
@@ -559,17 +622,19 @@ function statusClass(status: string) {
           </li>
         </ul>
       </div>
+    </section>
 
-      <div
-        v-else-if="mode === 'lpwan'"
-        class="mt-6 rounded-2xl border border-blue-100 bg-blue-50/40 p-5"
-      >
+    <section
+      v-else-if="mode === 'lpwan'"
+      class="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm"
+    >
+      <div class="border-b border-blue-100 bg-blue-50/40 px-5 py-4">
         <div class="flex items-center justify-between gap-3">
           <div>
-            <p class="text-sm font-semibold text-gray-900">
+            <h3 class="text-base font-bold text-slate-900">
               LoRaWAN-like devices
-            </p>
-            <p class="mt-1 text-xs text-gray-500">
+            </h3>
+            <p class="mt-1 text-sm text-slate-500">
               Devices first join the simulated LPWAN network, then users claim
               ownership with activation code.
             </p>
@@ -577,59 +642,63 @@ function statusClass(status: string) {
 
           <button
             type="button"
-            class="text-sm font-semibold text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+            class="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
             :disabled="loadingLpwan"
             @click="loadLpwan"
           >
             {{ loadingLpwan ? "Refreshing…" : "Refresh" }}
           </button>
         </div>
+      </div>
 
-        <p v-if="loadingLpwan" class="mt-3 text-sm text-gray-500">
+      <div class="p-5">
+        <p v-if="loadingLpwan" class="text-sm text-slate-500">
           Scanning LoRaWAN uplinks…
         </p>
 
         <p
           v-else-if="lpwanDevices.length === 0"
-          class="mt-3 text-sm text-gray-600"
+          class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500"
         >
           No unclaimed LPWAN devices found. Run
-          <span class="font-mono">npm run sim:lpwan</span>
+          <span class="font-mono font-semibold">npm run sim:lpwan</span>
           first, then click Refresh.
         </p>
 
-        <ul v-else class="mt-4 space-y-3">
+        <ul v-else class="space-y-3">
           <li
             v-for="d in lpwanDevices"
             :key="d.id"
-            class="rounded-2xl bg-white px-4 py-3 shadow-sm"
+            class="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4"
           >
-            <div class="flex items-start justify-between gap-3">
+            <div
+              class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"
+            >
               <div>
                 <div class="flex flex-wrap items-center gap-2">
-                  <p class="text-sm font-semibold text-gray-900">
+                  <p class="text-sm font-bold text-slate-900">
                     {{ d.name || d.type }}
                   </p>
 
                   <span
-                    class="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-100"
+                    class="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-bold text-violet-700 ring-1 ring-inset ring-violet-200"
                   >
                     {{ d.networkType || "LORAWAN" }}
                   </span>
 
                   <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset"
+                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                     :class="statusClass(d.status)"
                   >
                     {{ d.status }}
                   </span>
                 </div>
 
-                <p class="mt-1 text-xs text-gray-500">
+                <p class="mt-2 text-xs text-slate-500">
                   DevEUI: {{ d.devEui || "—" }}
                 </p>
 
-                <p class="mt-1 text-xs text-gray-500">
+                <p class="mt-1 text-xs text-slate-500">
                   Gateway: {{ d.gatewayId || "—" }}
                   <span v-if="d.lastRssi !== null && d.lastRssi !== undefined">
                     · RSSI {{ Math.round(d.lastRssi) }} dBm
@@ -650,14 +719,14 @@ function statusClass(status: string) {
                   </span>
                 </p>
 
-                <p class="mt-1 text-xs text-gray-400">
+                <p class="mt-1 text-xs text-slate-400">
                   Join status: {{ d.joinStatus || "UNCLAIMED" }}
                 </p>
               </div>
 
               <button
                 type="button"
-                class="rounded-2xl bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                 :disabled="!d.devEui"
                 @click="startLpwanConnect(d)"
               >
@@ -667,15 +736,13 @@ function statusClass(status: string) {
 
             <div
               v-if="selectedLpwanDevice?.id === d.id"
-              class="mt-4 rounded-2xl bg-gray-50 p-4"
+              class="mt-4 rounded-2xl border border-slate-200 bg-white p-4"
             >
-              <p class="text-sm font-semibold text-gray-900">
-                Claim LPWAN device
-              </p>
+              <p class="text-sm font-bold text-slate-900">Claim LPWAN device</p>
 
               <form class="mt-4 space-y-4" @submit.prevent="connectLpwan">
                 <div>
-                  <label class="text-sm font-medium text-gray-700">
+                  <label class="text-sm font-semibold text-slate-700">
                     Device name
                   </label>
                   <input
@@ -683,12 +750,12 @@ function statusClass(status: string) {
                     required
                     type="text"
                     placeholder="e.g. LoRa Temp Sensor 01"
-                    class="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300"
+                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
                   />
                 </div>
 
                 <div>
-                  <label class="text-sm font-medium text-gray-700">
+                  <label class="text-sm font-semibold text-slate-700">
                     Activation code
                   </label>
                   <input
@@ -697,15 +764,17 @@ function statusClass(status: string) {
                     type="text"
                     autocomplete="one-time-code"
                     placeholder="e.g. ABC123"
-                    class="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300"
+                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
                   />
                 </div>
 
-                <div class="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
-                  <p class="text-sm font-semibold text-blue-900">
+                <div
+                  class="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3"
+                >
+                  <p class="text-sm font-bold text-blue-900">
                     LoRaWAN-like flow
                   </p>
-                  <p class="mt-1 text-sm text-blue-700">
+                  <p class="mt-1 text-sm leading-6 text-blue-700">
                     This device has already joined the simulated LPWAN network
                     through gateway uplinks. Claiming only associates it with
                     your account.
@@ -715,7 +784,7 @@ function statusClass(status: string) {
                 <div class="flex items-center justify-end gap-3 pt-1">
                   <button
                     type="button"
-                    class="text-sm font-semibold text-gray-700 hover:text-gray-900"
+                    class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
                     @click="selectedLpwanDevice = null"
                   >
                     Cancel
@@ -724,7 +793,7 @@ function statusClass(status: string) {
                   <button
                     type="submit"
                     :disabled="busyConnectLpwanDevEui === d.devEui"
-                    class="rounded-2xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition enabled:hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                   >
                     {{
                       busyConnectLpwanDevEui === d.devEui
@@ -738,6 +807,6 @@ function statusClass(status: string) {
           </li>
         </ul>
       </div>
-    </div>
+    </section>
   </div>
 </template>
