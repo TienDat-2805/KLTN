@@ -62,11 +62,11 @@ type VirtualDeviceKind = "sensor" | "camera" | "light" | "ac";
 type VirtualDeviceState = {
   uid: string;
   kind: VirtualDeviceKind;
+  enabled: boolean;
 
   temperatureC?: number;
   humidityPct?: number;
   signalDbm: number;
-
   batteryPct?: number;
 
   lightOn?: boolean;
@@ -78,28 +78,9 @@ type VirtualDeviceState = {
   frameCounter?: number;
 };
 
-type TelemetryPayload = {
-  ts: string;
-
-  temperature?: number;
-  humidity?: number;
-  signalDbm?: number;
-
-  batteryPct?: number;
-  powerW?: number;
-
-  lightOn?: boolean;
-
-  acOn?: boolean;
-  acTargetTempC?: number;
-  roomTemperatureC?: number;
-
-  cameraFrame?: string;
-};
-
 function kindForUid(uid: string): VirtualDeviceKind {
   if (uid === "LIGHT_ETH_001") return "light";
-  if (uid === "WIFI_AC_001") return "ac";
+  if (uid === "AC_ETH_001") return "ac";
   if (uid === "CAMERA_ETH_001") return "camera";
 
   return "sensor";
@@ -112,6 +93,7 @@ function createInitialState(uid: string): VirtualDeviceState {
     return {
       uid,
       kind,
+      enabled: true,
       signalDbm: -62,
       batteryPct: 98,
       lightOn: false,
@@ -122,6 +104,7 @@ function createInitialState(uid: string): VirtualDeviceState {
     return {
       uid,
       kind,
+      enabled: true,
       signalDbm: -58,
       batteryPct: 100,
       acOn: false,
@@ -134,6 +117,7 @@ function createInitialState(uid: string): VirtualDeviceState {
     return {
       uid,
       kind,
+      enabled: true,
       signalDbm: -52,
       frameCounter: 0,
     };
@@ -142,6 +126,7 @@ function createInitialState(uid: string): VirtualDeviceState {
   return {
     uid,
     kind,
+    enabled: true,
     signalDbm: -60,
     batteryPct: 92,
     temperatureC: 28,
@@ -165,7 +150,7 @@ function buildCameraFrame(state: VirtualDeviceState, ts: string) {
   return Buffer.from(svg).toString("base64");
 }
 
-function updateStateBeforePublish(state: VirtualDeviceState): void {
+function updateStateBeforePublish(state: VirtualDeviceState) {
   state.signalDbm = drift(state.signalDbm, -90, -45, 2.5);
 
   if (state.kind === "sensor") {
@@ -177,8 +162,11 @@ function updateStateBeforePublish(state: VirtualDeviceState): void {
 
   if (state.kind === "light") {
     const isOn = state.lightOn ?? false;
-    const drain = isOn ? 0.08 : 0.005;
-    state.batteryPct = clamp((state.batteryPct ?? 98) - drain, 0, 100);
+    state.batteryPct = clamp(
+      (state.batteryPct ?? 98) - (isOn ? 0.08 : 0.005),
+      0,
+      100,
+    );
     return;
   }
 
@@ -208,7 +196,7 @@ function updateStateBeforePublish(state: VirtualDeviceState): void {
   }
 }
 
-function buildPayload(state: VirtualDeviceState, ts: string): TelemetryPayload {
+function buildPayload(state: VirtualDeviceState, ts: string) {
   updateStateBeforePublish(state);
 
   if (state.kind === "sensor") {
@@ -257,6 +245,12 @@ function buildPayload(state: VirtualDeviceState, ts: string): TelemetryPayload {
 function applyCommand(state: VirtualDeviceState, cmd: Record<string, unknown>) {
   const type = typeof cmd.type === "string" ? cmd.type : "";
 
+  if (type === "device:set") {
+    if (typeof cmd.enabled === "boolean") {
+      state.enabled = cmd.enabled;
+    }
+  }
+
   if (state.kind === "light" && type === "light:set") {
     if (typeof cmd.on === "boolean") state.lightOn = cmd.on;
   }
@@ -278,6 +272,7 @@ function applyCommand(state: VirtualDeviceState, cmd: Record<string, unknown>) {
 function commandLogPayload(state: VirtualDeviceState) {
   if (state.kind === "light") {
     return {
+      enabled: state.enabled,
       lightOn: state.lightOn ?? false,
       batteryPct: Number((state.batteryPct ?? 98).toFixed(1)),
       powerW: state.lightOn ? 9 : 0,
@@ -286,6 +281,7 @@ function commandLogPayload(state: VirtualDeviceState) {
 
   if (state.kind === "ac") {
     return {
+      enabled: state.enabled,
       acOn: state.acOn ?? false,
       acTargetTempC: state.acTargetTempC ?? 24,
       roomTemperatureC: Number((state.roomTemperatureC ?? 29).toFixed(1)),
@@ -293,7 +289,9 @@ function commandLogPayload(state: VirtualDeviceState) {
     };
   }
 
-  return {};
+  return {
+    enabled: state.enabled,
+  };
 }
 
 async function main() {
@@ -301,7 +299,7 @@ async function main() {
   const MQTT_USERNAME = process.env.MQTT_USERNAME ?? "";
   const MQTT_PASSWORD = process.env.MQTT_PASSWORD ?? "";
 
-  const DEVICE_COUNT = Math.trunc(num(process.env.DEVICE_COUNT, 4));
+  const DEVICE_COUNT = Math.trunc(num(process.env.DEVICE_COUNT, 6));
   const INTERVAL_MS = parseIntervalMs(process.env.INTERVAL, 5000);
   const DEVICE_UID_RAW = (process.env.DEVICE_UID ?? "").trim();
   const DEVICE_UIDS = parseCsv(process.env.DEVICE_UIDS);
@@ -331,12 +329,14 @@ async function main() {
         ? DEVICE_UID_LIST
         : [];
 
-  const maxDefaultDevices = 4;
+  const maxDefaultDevices = 6;
   const defaultUids = [
-    "WIFI_001",
-    "CAMERA_ETH_001",
+    "TEMP_ETH_001",
+    "HUMIDITY_ETH_001",
     "LIGHT_ETH_001",
-    "WIFI_AC_001",
+    "CAMERA_ETH_001",
+    "AC_ETH_001",
+    "POWER_ETH_001",
   ];
 
   const deviceCount = preferredUids.length
@@ -363,6 +363,14 @@ async function main() {
     const state = stateByUid.get(uid);
     if (!state) return false;
 
+    if (!state.enabled) {
+      if (reason === "command") {
+        console.log(`Device disabled, no telemetry published: ${uid}`);
+      }
+
+      return false;
+    }
+
     const ts = new Date().toISOString();
     const payload = buildPayload(state, ts);
 
@@ -377,6 +385,27 @@ async function main() {
     return true;
   }
 
+  client.on("connect", () => {
+    console.log(`Simulator connected: ${MQTT_URL}`);
+    console.log(
+      `Managing ${uids.length} virtual device(s) every ${effectiveIntervalMs}ms`,
+    );
+    console.log(`UIDs: ${uids.join(", ")}`);
+
+    console.log("Virtual device modes:");
+    for (const uid of uids) {
+      const state = stateByUid.get(uid);
+      console.log(
+        `- ${uid}: ${state?.kind ?? "unknown"} enabled=${state?.enabled ?? false}`,
+      );
+    }
+
+    client.subscribe("iot/devices/+/cmd", (err) => {
+      if (err) console.error("Simulator subscribe error:", err.message);
+      else console.log("Simulator subscribed: iot/devices/+/cmd");
+    });
+  });
+
   client.on("reconnect", () => {
     console.log("Simulator reconnecting...");
   });
@@ -389,31 +418,13 @@ async function main() {
     console.log("Simulator connection closed");
   });
 
-  client.on("connect", () => {
-    console.log(`Simulator connected: ${MQTT_URL}`);
-    console.log(
-      `Publishing ${uids.length} virtual device(s) every ${effectiveIntervalMs}ms`,
-    );
-    console.log(`UIDs: ${uids.join(", ")}`);
-
-    console.log("Virtual device modes:");
-    for (const uid of uids) {
-      const state = stateByUid.get(uid);
-      console.log(`- ${uid}: ${state?.kind ?? "unknown"}`);
-    }
-
-    client.subscribe("iot/devices/+/cmd", (err) => {
-      if (err) console.error("Simulator subscribe error:", err.message);
-      else console.log("Simulator subscribed: iot/devices/+/cmd");
-    });
-  });
-
   client.on("error", (err) => {
     console.error("Simulator MQTT error:", err.message);
   });
 
   client.on("message", (topic, payload) => {
     const uid = parseUidFromCmdTopic(topic);
+
     if (!uid) return;
     if (!uids.includes(uid)) return;
 
@@ -432,9 +443,7 @@ async function main() {
     const type = applyCommand(state, cmd);
 
     console.log(
-      `Simulator cmd for ${uid} (${type || "unknown"}): ${JSON.stringify(
-        commandLogPayload(state),
-      )}`,
+      `Simulator cmd for ${uid} (${type || "unknown"}): ${JSON.stringify(commandLogPayload(state))}`,
     );
 
     publishOne(uid, "command");

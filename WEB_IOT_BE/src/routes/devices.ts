@@ -4,7 +4,6 @@ import { ConnectionType, DeviceJoinStatus, DeviceStatus } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { requireAuth } from "../middleware/requireAuth";
 import { publishDeviceCommand, publishLpwanDownlink } from "../mqtt/client";
-import { getIO, userRoom } from "../realtime/io";
 
 type DiscoverMethod = "wired" | "wifi" | "lpwan";
 
@@ -71,6 +70,66 @@ function getConnectionTypeFromMethod(method: DiscoverMethod) {
   if (method === "wired") return ConnectionType.WIRED;
   if (method === "wifi") return ConnectionType.WIFI;
   return ConnectionType.LPWAN;
+}
+
+async function enableStandardVirtualDevice(
+  deviceUid: string | null | undefined,
+) {
+  const uid = (deviceUid ?? "").trim();
+  if (!uid) return;
+
+  try {
+    await publishDeviceCommand(uid, {
+      type: "device:set",
+      enabled: true,
+    });
+  } catch (err) {
+    console.warn(`Could not enable virtual device ${uid}:`, err);
+  }
+}
+
+async function disableStandardVirtualDevice(
+  deviceUid: string | null | undefined,
+) {
+  const uid = (deviceUid ?? "").trim();
+  if (!uid) return;
+
+  try {
+    await publishDeviceCommand(uid, {
+      type: "device:set",
+      enabled: false,
+    });
+  } catch (err) {
+    console.warn(`Could not disable virtual device ${uid}:`, err);
+  }
+}
+
+async function enableLpwanVirtualDevice(devEui: string | null | undefined) {
+  const safeDevEui = (devEui ?? "").trim();
+  if (!safeDevEui) return;
+
+  try {
+    await publishLpwanDownlink(safeDevEui, {
+      type: "lpwan:set",
+      enabled: true,
+    });
+  } catch (err) {
+    console.warn(`Could not enable LPWAN device ${safeDevEui}:`, err);
+  }
+}
+
+async function disableLpwanVirtualDevice(devEui: string | null | undefined) {
+  const safeDevEui = (devEui ?? "").trim();
+  if (!safeDevEui) return;
+
+  try {
+    await publishLpwanDownlink(safeDevEui, {
+      type: "lpwan:set",
+      enabled: false,
+    });
+  } catch (err) {
+    console.warn(`Could not disable LPWAN device ${safeDevEui}:`, err);
+  }
 }
 
 const baseDeviceSelect = {
@@ -162,9 +221,10 @@ devicesRouter.get("/", async (req, res) => {
   return res.json({
     devices: devices.map((d) => {
       const latestTelemetry = latestByDeviceId.get(d.id) ?? null;
+      const { userId: _userId, ...safeDevice } = d;
 
       return {
-        ...d,
+        ...safeDevice,
         lastSeenAt: d.lastSeenAt ?? latestTelemetry?.ts ?? null,
         latestTelemetry: mapTelemetry(latestTelemetry),
       };
@@ -214,6 +274,8 @@ devicesRouter.post("/claim", async (req, res) => {
     where: { activationCode: activationCode.trim() },
     select: {
       id: true,
+      deviceUid: true,
+      devEui: true,
       userId: true,
       connectionType: true,
     },
@@ -235,12 +297,20 @@ devicesRouter.post("/claim", async (req, res) => {
     select: baseDeviceSelect,
   });
 
+  if (found.connectionType === ConnectionType.LPWAN) {
+    await enableLpwanVirtualDevice(found.devEui);
+  } else {
+    await enableStandardVirtualDevice(found.deviceUid);
+  }
+
+  const { userId: _userId, ...safeDevice } = updated;
+
   return res.status(200).json({
     device: {
-      ...updated,
+      ...safeDevice,
       latestTelemetry: null,
     },
-    message: "Waiting for device to come online...",
+    message: "Device claimed. Waiting for telemetry update...",
   });
 });
 
@@ -267,6 +337,7 @@ devicesRouter.post("/claim-wifi", async (req, res) => {
     where: { deviceUid: deviceUid.trim() },
     select: {
       id: true,
+      deviceUid: true,
       activationCode: true,
       userId: true,
       connectionType: true,
@@ -297,12 +368,16 @@ devicesRouter.post("/claim-wifi", async (req, res) => {
     select: baseDeviceSelect,
   });
 
+  await enableStandardVirtualDevice(found.deviceUid);
+
+  const { userId: _userId, ...safeDevice } = updated;
+
   return res.status(200).json({
     device: {
-      ...updated,
+      ...safeDevice,
       latestTelemetry: null,
     },
-    message: "Waiting for device to come online...",
+    message: "Device claimed. Waiting for telemetry update...",
   });
 });
 
@@ -326,9 +401,10 @@ devicesRouter.post("/claim-lpwan", async (req, res) => {
   if (!nextName) return res.status(400).json({ error: "Missing name" });
 
   const found = await prisma.device.findUnique({
-    where: { devEui: devEui.trim() },
+    where: { devEui: devEui.trim().toUpperCase() },
     select: {
       id: true,
+      devEui: true,
       activationCode: true,
       userId: true,
       connectionType: true,
@@ -359,15 +435,19 @@ devicesRouter.post("/claim-lpwan", async (req, res) => {
     select: baseDeviceSelect,
   });
 
+  await enableLpwanVirtualDevice(found.devEui);
+
   const latestTelemetry = await prisma.telemetry.findFirst({
     where: { deviceId: updated.id },
     orderBy: { ts: "desc" },
     select: telemetrySelect,
   });
 
+  const { userId: _userId, ...safeDevice } = updated;
+
   return res.status(200).json({
     device: {
-      ...updated,
+      ...safeDevice,
       latestTelemetry: latestTelemetry
         ? mapTelemetry({
             ...latestTelemetry,
@@ -380,7 +460,7 @@ devicesRouter.post("/claim-lpwan", async (req, res) => {
           })
         : null,
     },
-    message: "LPWAN device claimed successfully.",
+    message: "LPWAN device claimed. Waiting for next uplink.",
   });
 });
 
@@ -396,6 +476,7 @@ devicesRouter.post("/claim-wired", async (req, res) => {
     where: { deviceUid: deviceUid.trim() },
     select: {
       id: true,
+      deviceUid: true,
       userId: true,
       connectionType: true,
       status: true,
@@ -412,10 +493,6 @@ devicesRouter.post("/claim-wired", async (req, res) => {
     return res.status(400).json({ error: "Device already claimed" });
   }
 
-  if (found.status === DeviceStatus.OFFLINE) {
-    return res.status(400).json({ error: "Device is offline" });
-  }
-
   const updated = await prisma.device.update({
     where: { id: found.id },
     data: {
@@ -425,12 +502,16 @@ devicesRouter.post("/claim-wired", async (req, res) => {
     select: baseDeviceSelect,
   });
 
+  await enableStandardVirtualDevice(found.deviceUid);
+
+  const { userId: _userId, ...safeDevice } = updated;
+
   return res.status(200).json({
     device: {
-      ...updated,
+      ...safeDevice,
       latestTelemetry: null,
     },
-    message: "Waiting for device to come online...",
+    message: "Device claimed. Waiting for telemetry update...",
   });
 });
 
@@ -470,7 +551,7 @@ devicesRouter.patch("/:id", async (req, res) => {
   if (!device) return res.status(404).json({ error: "Device not found" });
 
   const latestTelemetry = device.telemetry[0] ?? null;
-  const { telemetry, ...deviceWithoutTelemetry } = device;
+  const { telemetry, userId: _userId, ...deviceWithoutTelemetry } = device;
 
   return res.json({
     device: {
@@ -650,11 +731,19 @@ devicesRouter.delete("/:id", async (req, res) => {
     where: { id, userId },
     select: {
       id: true,
+      deviceUid: true,
+      devEui: true,
       connectionType: true,
     },
   });
 
   if (!existing) return res.status(404).json({ error: "Device not found" });
+
+  if (existing.connectionType === ConnectionType.LPWAN) {
+    await disableLpwanVirtualDevice(existing.devEui);
+  } else {
+    await disableStandardVirtualDevice(existing.deviceUid);
+  }
 
   await prisma.device.update({
     where: { id: existing.id },

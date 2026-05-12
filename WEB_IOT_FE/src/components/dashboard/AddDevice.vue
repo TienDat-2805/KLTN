@@ -267,7 +267,13 @@ function statusClass(status: string) {
     return "bg-amber-50 text-amber-700 ring-amber-200";
   }
 
-  return "bg-red-50 text-red-700 ring-red-200";
+  return "bg-slate-100 text-slate-600 ring-slate-200";
+}
+
+function signalStatusText(status: string) {
+  if (status === "ONLINE") return "Có tín hiệu";
+  if (status === "WARNING") return "Cảnh báo";
+  return "Chờ kết nối";
 }
 
 function claimStatusClass(d: DiscoverableDevice) {
@@ -314,6 +320,11 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
           <h2 class="mt-1 text-2xl font-black tracking-tight text-slate-900">
             Thêm thiết bị
           </h2>
+          <p class="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+            Chọn phương thức kết nối để tìm thiết bị khả dụng. Thiết bị đã thuộc
+            tài khoản khác vẫn hiển thị trong danh sách, nhưng không thể kết nối
+            lại.
+          </p>
         </div>
       </div>
 
@@ -386,8 +397,8 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
           Hiển thị thiết bị kết nối trực tiếp bằng Ethernet/cable.
         </p>
       </button>
-
-      <button
+      <!-- Nút add thiết bị wifi -->
+      <!-- <button
         type="button"
         class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
         :class="
@@ -416,7 +427,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
         <p class="mt-2 text-sm leading-6 text-slate-500">
           Tìm các thiết bị đang nằm trong cùng mạng Wi-Fi.
         </p>
-      </button>
+      </button> -->
 
       <button
         type="button"
@@ -459,7 +470,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
           <div>
             <h3 class="text-base font-bold text-slate-900">Wired devices</h3>
             <p class="mt-1 text-sm text-slate-500">
-              Device must be online before it can be connected.
+              Thiết bị có thể được claim nếu chưa thuộc tài khoản nào.
             </p>
           </div>
 
@@ -500,7 +511,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
                   class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                   :class="statusClass(d.status)"
                 >
-                  {{ d.status }}
+                  {{ signalStatusText(d.status) }}
                 </span>
 
                 <span
@@ -514,22 +525,13 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
               <p class="mt-1 text-xs text-slate-500">
                 {{ d.deviceUid }} · {{ d.model }}
               </p>
-
-              <p
-                v-if="d.status === 'OFFLINE'"
-                class="mt-1 text-xs text-slate-400"
-              >
-                Start MQTT simulator first to make this device online.
-              </p>
             </div>
 
             <button
               type="button"
               class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
               :disabled="
-                d.status === 'OFFLINE' ||
-                !canClaimDevice(d) ||
-                busyConnectWiredUid === d.deviceUid
+                !canClaimDevice(d) || busyConnectWiredUid === d.deviceUid
               "
               @click="connectWired(d)"
             >
@@ -600,7 +602,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
                     class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                     :class="statusClass(d.status)"
                   >
-                    {{ d.status }}
+                    {{ signalStatusText(d.status) }}
                   </span>
 
                   <span
@@ -619,7 +621,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
               <button
                 type="button"
                 class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                :disabled="d.status === 'OFFLINE' || !canClaimDevice(d)"
+                :disabled="!canClaimDevice(d)"
                 @click="startWifiConnect(d)"
               >
                 {{ actionText(d, "Connect") }}
@@ -754,7 +756,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
                     class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
                     :class="statusClass(d.status)"
                   >
-                    {{ d.status }}
+                    {{ signalStatusText(d.status) }}
                   </span>
 
                   <span

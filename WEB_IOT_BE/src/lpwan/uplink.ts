@@ -130,8 +130,29 @@ function parseLpwanUplink(raw: unknown, topicDevEui?: string) {
   };
 }
 
-function computeStatus(temperatureC: number): DeviceStatus {
-  return temperatureC > 35 ? DeviceStatus.WARNING : DeviceStatus.ONLINE;
+const HIGH_TEMPERATURE_C = 35;
+const LOW_BATTERY_PCT = 20;
+const WEAK_RSSI_DBM = -115;
+const WEAK_SNR_DB = -5;
+
+function computeStatus(uplink: {
+  temperatureC: number;
+  batteryPct?: number;
+  rssi?: number;
+  snr?: number;
+}): DeviceStatus {
+  const highTemperature = uplink.temperatureC > HIGH_TEMPERATURE_C;
+
+  const lowBattery =
+    uplink.batteryPct !== undefined && uplink.batteryPct < LOW_BATTERY_PCT;
+
+  const weakSignal =
+    (uplink.rssi !== undefined && uplink.rssi < WEAK_RSSI_DBM) ||
+    (uplink.snr !== undefined && uplink.snr < WEAK_SNR_DB);
+
+  return highTemperature || lowBattery || weakSignal
+    ? DeviceStatus.WARNING
+    : DeviceStatus.ONLINE;
 }
 
 export async function handleLpwanUplink(
@@ -139,7 +160,32 @@ export async function handleLpwanUplink(
   rawPayload: unknown,
 ) {
   const uplink = parseLpwanUplink(rawPayload, topicDevEui ?? undefined);
-  const status = computeStatus(uplink.temperatureC);
+  const status = computeStatus(uplink);
+
+  if (status === DeviceStatus.WARNING) {
+    const reasons: string[] = [];
+
+    if (uplink.temperatureC > HIGH_TEMPERATURE_C) {
+      reasons.push(`high temperature ${uplink.temperatureC}C`);
+    }
+
+    if (
+      uplink.batteryPct !== undefined &&
+      uplink.batteryPct < LOW_BATTERY_PCT
+    ) {
+      reasons.push(`low battery ${uplink.batteryPct}%`);
+    }
+
+    if (uplink.rssi !== undefined && uplink.rssi < WEAK_RSSI_DBM) {
+      reasons.push(`weak RSSI ${uplink.rssi}dBm`);
+    }
+
+    if (uplink.snr !== undefined && uplink.snr < WEAK_SNR_DB) {
+      reasons.push(`weak SNR ${uplink.snr}dB`);
+    }
+
+    console.warn(`LPWAN warning for ${uplink.devEui}: ${reasons.join(", ")}`);
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {
