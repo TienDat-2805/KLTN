@@ -515,6 +515,94 @@ devicesRouter.post("/claim-wired", async (req, res) => {
   });
 });
 
+devicesRouter.patch("/:id/enabled", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+  const { enabled } = (req.body ?? {}) as { enabled?: unknown };
+
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "Invalid enabled" });
+  }
+
+  const device = await prisma.device.findFirst({
+    where: {
+      id: deviceId,
+      userId,
+    },
+    select: {
+      id: true,
+      deviceUid: true,
+      devEui: true,
+      connectionType: true,
+    },
+  });
+
+  if (!device) {
+    return res.status(404).json({ error: "Device not found" });
+  }
+
+  try {
+    if (device.connectionType === ConnectionType.LPWAN) {
+      if (!device.devEui) {
+        return res.status(400).json({ error: "LPWAN device missing devEui" });
+      }
+
+      await publishLpwanDownlink(device.devEui, {
+        type: "lpwan:set",
+        enabled,
+      });
+    } else {
+      await publishDeviceCommand(device.deviceUid, {
+        type: "device:set",
+        enabled,
+      });
+    }
+  } catch {
+    return res.status(503).json({ error: "MQTT unavailable" });
+  }
+
+  const updated = await prisma.device.update({
+    where: { id: device.id },
+    data: {
+      isEnabled: enabled,
+      status: DeviceStatus.OFFLINE,
+      ...(enabled ? {} : { lastSeenAt: null }),
+    },
+    select: {
+      ...baseDeviceSelect,
+      telemetry: {
+        orderBy: { ts: "desc" },
+        take: 1,
+        select: telemetrySelect,
+      },
+    },
+  });
+
+  const latestTelemetry = updated.telemetry[0] ?? null;
+  const { telemetry, userId: _userId, ...deviceWithoutTelemetry } = updated;
+
+  return res.status(200).json({
+    device: {
+      ...deviceWithoutTelemetry,
+      lastSeenAt: updated.lastSeenAt ?? latestTelemetry?.ts ?? null,
+      latestTelemetry: latestTelemetry
+        ? mapTelemetry({
+            ...latestTelemetry,
+            signalDbm: latestTelemetry.signalDbm ?? null,
+            rssi: latestTelemetry.rssi ?? null,
+            snr: latestTelemetry.snr ?? null,
+            spreadingFactor: latestTelemetry.spreadingFactor ?? null,
+            batteryPct: latestTelemetry.batteryPct ?? null,
+            uplinkCounter: latestTelemetry.uplinkCounter ?? null,
+          })
+        : null,
+    },
+    message: enabled
+      ? "Device enable command sent. Waiting for telemetry update."
+      : "Device disabled.",
+  });
+});
+
 devicesRouter.patch("/:id", async (req, res) => {
   const userId = req.user!.id;
   const id = req.params.id;
@@ -749,6 +837,7 @@ devicesRouter.delete("/:id", async (req, res) => {
     where: { id: existing.id },
     data: {
       userId: null,
+      isEnabled: false,
       joinStatus: DeviceJoinStatus.UNCLAIMED,
       status: DeviceStatus.OFFLINE,
       lastSeenAt: null,

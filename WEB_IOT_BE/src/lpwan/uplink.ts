@@ -197,8 +197,13 @@ export async function handleLpwanUplink(
           devEui: true,
           deviceUid: true,
           name: true,
+          isEnabled: true,
         },
       });
+
+      if (device && !device.isEnabled) {
+        return null;
+      }
 
       if (!device) {
         const created = await tx.device.create({
@@ -233,6 +238,7 @@ export async function handleLpwanUplink(
             devEui: true,
             deviceUid: true,
             name: true,
+            isEnabled: true,
           },
         });
 

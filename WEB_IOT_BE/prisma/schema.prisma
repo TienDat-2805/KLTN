@@ -70,6 +70,7 @@ model Device {
   lastUplinkCounter   Int?      @map("last_uplink_counter")
 
   // Optional runtime state
+  isEnabled      Boolean  @default(true) @map("is_enabled")
   lightOn        Boolean? @map("light_on")
   acOn           Boolean? @map("ac_on")
   acTargetTempC  Int?     @map("ac_target_temp_c")

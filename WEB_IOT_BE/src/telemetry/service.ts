@@ -141,8 +141,15 @@ export async function saveTelemetryByDeviceId(
         select: {
           id: true,
           userId: true,
+          isEnabled: true,
         },
       });
+
+      if (!device) return null;
+
+      if (!device.isEnabled) {
+        return null;
+      }
 
       if (!device) return null;
 
