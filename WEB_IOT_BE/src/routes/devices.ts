@@ -566,7 +566,13 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
     data: {
       isEnabled: enabled,
       status: DeviceStatus.OFFLINE,
-      ...(enabled ? {} : { lastSeenAt: null }),
+      ...(enabled
+        ? {}
+        : {
+            lastSeenAt: null,
+            lightOn: false,
+            acOn: false,
+          }),
     },
     select: {
       ...baseDeviceSelect,

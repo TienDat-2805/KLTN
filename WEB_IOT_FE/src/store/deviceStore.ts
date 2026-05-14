@@ -55,6 +55,7 @@ export type Device = {
   status: DeviceStatus;
   lastSeenAt: string | null;
   latestTelemetry: TelemetryPoint | null;
+  isEnabled?: boolean;
   lightOn?: boolean;
   acOn?: boolean;
   acTargetTempC?: number;
@@ -165,6 +166,7 @@ export const useDeviceStore = defineStore("device", {
       pendingRuntimeByDeviceId: {} as Record<string, PendingRuntime>,
       lpwanUplinkEnabledByDeviceId: {} as Record<string, boolean>,
       lpwanBusyByDeviceId: {} as Record<string, boolean>,
+      deviceEnabledBusyByDeviceId: {} as Record<string, boolean>,
       notifications: [] as DeviceNotification[],
       relativeTimeTick: 0,
       loading: false,
@@ -190,6 +192,8 @@ export const useDeviceStore = defineStore("device", {
       state.pendingRuntimeByDeviceId[deviceId]?.acTargetTempC !== undefined,
     isLpwanBusy: (state) => (deviceId: string) =>
       state.lpwanBusyByDeviceId[deviceId] === true,
+    isDeviceEnabledBusy: (state) => (deviceId: string) =>
+      state.deviceEnabledBusyByDeviceId[deviceId] === true,
   },
   actions: {
     pushNotification(
@@ -293,7 +297,7 @@ export const useDeviceStore = defineStore("device", {
             d.connectionType === "LPWAN" &&
             this.lpwanUplinkEnabledByDeviceId[d.id] === undefined
           ) {
-            this.lpwanUplinkEnabledByDeviceId[d.id] = d.status !== "OFFLINE";
+            this.lpwanUplinkEnabledByDeviceId[d.id] = d.isEnabled !== false;
           }
         }
       } catch (err) {
@@ -389,6 +393,7 @@ export const useDeviceStore = defineStore("device", {
     },
     applyTelemetry(payload: TelemetryNewEvent) {
       const device = this.devices.find((d) => d.id === payload.deviceId);
+      if (device?.isEnabled === false) return;
       if (device) {
         const point: TelemetryPoint = {
           ts: payload.ts,
@@ -417,13 +422,8 @@ export const useDeviceStore = defineStore("device", {
       device.status = payload.status;
       device.lastSeenAt = payload.lastSeenAt;
       if (device.connectionType === "LPWAN") {
-        if (payload.status === "OFFLINE") {
-          this.lpwanUplinkEnabledByDeviceId[device.id] = false;
-        }
-
-        if (payload.status === "ONLINE" || payload.status === "WARNING") {
-          this.lpwanUplinkEnabledByDeviceId[device.id] = true;
-        }
+        this.lpwanUplinkEnabledByDeviceId[device.id] =
+          device.isEnabled !== false;
       }
       if (payload.status === "WARNING" && prevStatus !== "WARNING") {
         const label = (device.name ?? "").trim() || device.type;
@@ -835,7 +835,7 @@ export const useDeviceStore = defineStore("device", {
         return false;
       }
     },
-    async setLpwanEnabled(input: { id: string; enabled: boolean }) {
+    async setDeviceEnabled(input: { id: string; enabled: boolean }) {
       const auth = useAuthStore();
 
       if (!auth.accessToken) return false;
@@ -845,38 +845,100 @@ export const useDeviceStore = defineStore("device", {
 
       const device = this.devices.find((d) => d.id === input.id);
 
-      if (!device || device.connectionType !== "LPWAN") {
-        this.error = "Device is not an LPWAN device";
+      if (!device) {
+        this.error = "Device not found";
         return false;
       }
 
-      const previous = this.lpwanUplinkEnabledByDeviceId[input.id];
+      if (device.connectionType === "WIFI") {
+        this.error = "Wi-Fi device control is not used in this version";
+        return false;
+      }
 
-      this.lpwanBusyByDeviceId[input.id] = true;
-      this.lpwanUplinkEnabledByDeviceId[input.id] = input.enabled;
+      const previousEnabled = device.isEnabled;
+      const previousStatus = device.status;
+      const previousLastSeenAt = device.lastSeenAt;
+      const previousLpwanEnabled = this.lpwanUplinkEnabledByDeviceId[input.id];
+
+      this.deviceEnabledBusyByDeviceId[input.id] = true;
+      if (device.connectionType === "LPWAN") {
+        this.lpwanBusyByDeviceId[input.id] = true;
+        this.lpwanUplinkEnabledByDeviceId[input.id] = input.enabled;
+      }
+
+      device.isEnabled = input.enabled;
+
+      if (!input.enabled) {
+        device.status = "OFFLINE";
+        device.lastSeenAt = null;
+        device.lightOn = false;
+        device.acOn = false;
+
+        this.clearPendingRuntimeField(input.id, "lightOn");
+        this.clearPendingRuntimeField(input.id, "acOn");
+        this.clearPendingRuntimeField(input.id, "acTargetTempC");
+      }
 
       try {
-        await apiRequest(`/devices/${input.id}/control/lpwan`, {
-          method: "POST",
-          token: auth.accessToken,
-          body: { enabled: input.enabled },
-        });
+        const data = await apiRequest<{ device?: Device; message?: string }>(
+          `/devices/${input.id}/enabled`,
+          {
+            method: "PATCH",
+            token: auth.accessToken,
+            body: { enabled: input.enabled },
+          },
+        );
+
+        if (data.device) {
+          const syncedDevice: Device = {
+            ...data.device,
+            ...(input.enabled
+              ? {}
+              : {
+                  status: "OFFLINE",
+                  lastSeenAt: null,
+                  lightOn: false,
+                  acOn: false,
+                }),
+          };
+
+          this.devices = this.devices.map((d) =>
+            d.id === input.id ? { ...d, ...syncedDevice } : d,
+          );
+
+          if (data.device.connectionType === "LPWAN") {
+            this.lpwanUplinkEnabledByDeviceId[data.device.id] =
+              data.device.isEnabled !== false;
+          }
+        }
 
         return true;
       } catch (err) {
-        if (previous === undefined) {
-          delete this.lpwanUplinkEnabledByDeviceId[input.id];
-        } else {
-          this.lpwanUplinkEnabledByDeviceId[input.id] = previous;
+        device.isEnabled = previousEnabled;
+        device.status = previousStatus;
+        device.lastSeenAt = previousLastSeenAt;
+
+        if (device.connectionType === "LPWAN") {
+          if (previousLpwanEnabled === undefined) {
+            delete this.lpwanUplinkEnabledByDeviceId[input.id];
+          } else {
+            this.lpwanUplinkEnabledByDeviceId[input.id] = previousLpwanEnabled;
+          }
         }
 
         this.error =
-          err instanceof Error ? err.message : "Failed to control LPWAN device";
+          err instanceof Error ? err.message : "Failed to control device";
 
         return false;
       } finally {
-        this.lpwanBusyByDeviceId[input.id] = false;
+        this.deviceEnabledBusyByDeviceId[input.id] = false;
+        if (device.connectionType === "LPWAN") {
+          this.lpwanBusyByDeviceId[input.id] = false;
+        }
       }
+    },
+    async setLpwanEnabled(input: { id: string; enabled: boolean }) {
+      return this.setDeviceEnabled(input);
     },
   },
 });

@@ -9,6 +9,7 @@ import {
   ExclamationTriangleIcon,
   FireIcon,
   LightBulbIcon,
+  PowerIcon,
   SignalIcon,
   WifiIcon,
 } from "@heroicons/vue/24/outline";
@@ -135,6 +136,23 @@ async function toggleLight(d: Device) {
 async function toggleAirConditioner(d: Device) {
   const nextOn = !(d.acOn ?? false);
   await store.setAirConditioner({ id: d.id, on: nextOn });
+}
+
+function canControlDeviceEnabled(d: Device) {
+  return d.connectionType === "LPWAN" || d.connectionType === "WIRED";
+}
+
+function deviceEnabled(d: Device) {
+  return d.isEnabled !== false;
+}
+
+async function toggleDeviceEnabled(d: Device) {
+  if (!canControlDeviceEnabled(d)) return;
+
+  await store.setDeviceEnabled({
+    id: d.id,
+    enabled: !deviceEnabled(d),
+  });
 }
 
 function statusPill(on: boolean | undefined) {
@@ -317,12 +335,36 @@ function metricsForDevice(
                 </div>
               </div>
 
-              <span
-                :class="statusBadgeClasses(d.status)"
-                class="inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-bold"
-              >
-                {{ statusLabel(d.status) }}
-              </span>
+              <div class="flex shrink-0 flex-col items-end gap-2">
+                <span
+                  :class="statusBadgeClasses(d.status)"
+                  class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold"
+                >
+                  {{ statusLabel(d.status) }}
+                </span>
+
+                <button
+                  v-if="canControlDeviceEnabled(d)"
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset transition disabled:cursor-not-allowed disabled:opacity-60"
+                  :class="
+                    deviceEnabled(d)
+                      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100'
+                      : 'bg-slate-100 text-slate-700 ring-slate-200 hover:bg-slate-200'
+                  "
+                  :disabled="store.isDeviceEnabledBusy(d.id)"
+                  @click="toggleDeviceEnabled(d)"
+                >
+                  <PowerIcon class="h-3.5 w-3.5" />
+                  {{
+                    store.isDeviceEnabledBusy(d.id)
+                      ? "Đang gửi"
+                      : deviceEnabled(d)
+                        ? "Tắt thiết bị"
+                        : "Bật thiết bị"
+                  }}
+                </button>
+              </div>
             </div>
 
             <div
@@ -390,7 +432,11 @@ function metricsForDevice(
                   type="button"
                   class="group grid h-28 w-28 place-items-center rounded-full bg-slate-900 text-white shadow-sm ring-8 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                   :class="d.lightOn ? 'ring-emerald-100' : 'ring-slate-100'"
-                  :disabled="d.status === 'OFFLINE' || store.isLightBusy(d.id)"
+                  :disabled="
+                    !deviceEnabled(d) ||
+                    d.status === 'OFFLINE' ||
+                    store.isLightBusy(d.id)
+                  "
                   @click="toggleLight(d)"
                 >
                   <span class="text-xl font-bold tracking-wide">
@@ -400,10 +446,14 @@ function metricsForDevice(
               </div>
 
               <p
-                v-if="d.status === 'OFFLINE'"
+                v-if="!deviceEnabled(d) || d.status === 'OFFLINE'"
                 class="mt-2 text-xs text-slate-500"
               >
-                Device is offline.
+                {{
+                  !deviceEnabled(d)
+                    ? "Device is disabled."
+                    : "Device is offline."
+                }}
               </p>
             </div>
 
@@ -425,7 +475,11 @@ function metricsForDevice(
                 <button
                   type="button"
                   class="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="d.status === 'OFFLINE' || store.isAcBusy(d.id)"
+                  :disabled="
+                    !deviceEnabled(d) ||
+                    d.status === 'OFFLINE' ||
+                    store.isAcBusy(d.id)
+                  "
                   @click="toggleAirConditioner(d)"
                 >
                   {{ d.acOn ? "Turn off" : "Turn on" }}
@@ -450,7 +504,9 @@ function metricsForDevice(
                   class="mt-2 w-full accent-blue-600"
                   :value="acDraftValue(d)"
                   :disabled="
-                    d.status === 'OFFLINE' || store.isAcTargetBusy(d.id)
+                    !deviceEnabled(d) ||
+                    d.status === 'OFFLINE' ||
+                    store.isAcTargetBusy(d.id)
                   "
                   @input="onAcDraftInput(d.id, $event)"
                   @change="onAcTargetChange(d, $event)"
@@ -458,10 +514,14 @@ function metricsForDevice(
               </div>
 
               <p
-                v-if="d.status === 'OFFLINE'"
+                v-if="!deviceEnabled(d) || d.status === 'OFFLINE'"
                 class="mt-2 text-xs text-slate-500"
               >
-                Device is offline.
+                {{
+                  !deviceEnabled(d)
+                    ? "Device is disabled."
+                    : "Device is offline."
+                }}
               </p>
             </div>
 
