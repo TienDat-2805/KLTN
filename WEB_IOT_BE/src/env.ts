@@ -12,6 +12,7 @@ export type AppEnv = {
 	MQTT_USERNAME: string
 	MQTT_PASSWORD: string
 	MQTT_TELEMETRY_TOPIC: string
+	DEVICE_COMMAND_ACK_TIMEOUT_MS: number
 }
 
 function parseOrigins(value: string | undefined): string[] {
@@ -40,6 +41,7 @@ export const env: AppEnv = {
 	MQTT_USERNAME: process.env.MQTT_USERNAME ?? '',
 	MQTT_PASSWORD: process.env.MQTT_PASSWORD ?? '',
 	MQTT_TELEMETRY_TOPIC: process.env.MQTT_TELEMETRY_TOPIC ?? 'iot/devices/+/telemetry',
+	DEVICE_COMMAND_ACK_TIMEOUT_MS: parseNumber(process.env.DEVICE_COMMAND_ACK_TIMEOUT_MS, 5000),
 }
 
 if (!env.JWT_ACCESS_SECRET) {

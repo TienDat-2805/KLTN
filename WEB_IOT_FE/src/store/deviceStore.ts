@@ -454,9 +454,12 @@ export const useDeviceStore = defineStore("device", {
           }
           // Ignore mismatched updates while pending to avoid flicker.
         } else {
+          const changed = device.lightOn !== payload.lightOn;
           device.lightOn = payload.lightOn;
-          runtimePoint.lightOn = payload.lightOn;
-          recorded = true;
+          if (changed) {
+            runtimePoint.lightOn = payload.lightOn;
+            recorded = true;
+          }
         }
       }
 
@@ -469,9 +472,12 @@ export const useDeviceStore = defineStore("device", {
             recorded = true;
           }
         } else {
+          const changed = device.acOn !== payload.acOn;
           device.acOn = payload.acOn;
-          runtimePoint.acOn = payload.acOn;
-          recorded = true;
+          if (changed) {
+            runtimePoint.acOn = payload.acOn;
+            recorded = true;
+          }
         }
       }
 
@@ -488,9 +494,12 @@ export const useDeviceStore = defineStore("device", {
             recorded = true;
           }
         } else {
+          const changed = device.acTargetTempC !== next;
           device.acTargetTempC = next;
-          runtimePoint.acTargetTempC = next;
-          recorded = true;
+          if (changed) {
+            runtimePoint.acTargetTempC = next;
+            recorded = true;
+          }
         }
       }
 
@@ -769,11 +778,23 @@ export const useDeviceStore = defineStore("device", {
       if (device) device.lightOn = input.on;
       this.setPendingRuntime(input.id, { lightOn: input.on });
       try {
-        await apiRequest(`/devices/${input.id}/control/light`, {
+        const data = await apiRequest<{
+          device?: { id: string; lightOn?: boolean };
+        }>(`/devices/${input.id}/control/light`, {
           method: "POST",
           token: auth.accessToken,
           body: { on: input.on },
         });
+
+        if (typeof data.device?.lightOn === "boolean") {
+          this.applyRuntime({
+            deviceId: input.id,
+            lightOn: data.device.lightOn,
+          });
+        } else {
+          this.clearPendingRuntimeField(input.id, "lightOn");
+        }
+
         return true;
       } catch (err) {
         this.clearPendingRuntimeField(input.id, "lightOn");
@@ -807,7 +828,13 @@ export const useDeviceStore = defineStore("device", {
           : {}),
       });
       try {
-        await apiRequest(`/devices/${input.id}/control/ac`, {
+        const data = await apiRequest<{
+          device?: {
+            id: string;
+            acOn?: boolean;
+            acTargetTempC?: number;
+          };
+        }>(`/devices/${input.id}/control/ac`, {
           method: "POST",
           token: auth.accessToken,
           body: {
@@ -817,6 +844,27 @@ export const useDeviceStore = defineStore("device", {
               : {}),
           },
         });
+
+        const runtimeAck: DeviceRuntimeEvent = { deviceId: input.id };
+        if (typeof data.device?.acOn === "boolean") {
+          runtimeAck.acOn = data.device.acOn;
+        }
+        if (typeof data.device?.acTargetTempC === "number") {
+          runtimeAck.acTargetTempC = data.device.acTargetTempC;
+        }
+
+        if (
+          typeof runtimeAck.acOn === "boolean" ||
+          typeof runtimeAck.acTargetTempC === "number"
+        ) {
+          this.applyRuntime(runtimeAck);
+        } else {
+          if (typeof input.on === "boolean")
+            this.clearPendingRuntimeField(input.id, "acOn");
+          if (typeof input.targetTempC === "number")
+            this.clearPendingRuntimeField(input.id, "acTargetTempC");
+        }
+
         return true;
       } catch (err) {
         if (typeof input.on === "boolean")

@@ -1,9 +1,15 @@
 import { Router } from "express";
-import { ConnectionType, DeviceJoinStatus, DeviceStatus } from "@prisma/client";
+import {
+  ConnectionType,
+  DeviceJoinStatus,
+  DeviceStatus,
+} from "@prisma/client";
 
 import { prisma } from "../db/prisma";
+import { calculateLpwanHealth } from "../lpwan/health";
 import { requireAuth } from "../middleware/requireAuth";
 import { publishDeviceCommand, publishLpwanDownlink } from "../mqtt/client";
+import { getIO, userRoom } from "../realtime/io";
 
 type DiscoverMethod = "wired" | "wifi" | "lpwan";
 
@@ -43,6 +49,15 @@ function mapTelemetry(t: LatestTelemetry | null) {
   };
 }
 
+function parseOptionalDateQuery(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new Error("Invalid date");
+
+  return d;
+}
+
 function mapDiscoverDevice<T extends { userId: string | null }>(
   device: T,
   currentUserId: string,
@@ -70,6 +85,32 @@ function getConnectionTypeFromMethod(method: DiscoverMethod) {
   if (method === "wired") return ConnectionType.WIRED;
   if (method === "wifi") return ConnectionType.WIFI;
   return ConnectionType.LPWAN;
+}
+
+function canonicalDeviceType(type: string | null | undefined) {
+  return (type ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+function isLightDevice(type: string | null | undefined) {
+  const t = canonicalDeviceType(type);
+  return t === "light" || t === "lamp";
+}
+
+function isAirConditionerDevice(type: string | null | undefined) {
+  const t = canonicalDeviceType(type);
+  return t === "air conditioner" || t === "ac" || t === "a c";
+}
+
+function emitRuntimeUpdate(
+  userId: string,
+  payload: {
+    deviceId: string;
+    lightOn?: boolean;
+    acOn?: boolean;
+    acTargetTempC?: number;
+  },
+) {
+  getIO()?.to(userRoom(userId)).emit("device:runtime", payload);
 }
 
 async function enableStandardVirtualDevice(
@@ -552,10 +593,17 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
         enabled,
       });
     } else {
-      await publishDeviceCommand(device.deviceUid, {
-        type: "device:set",
-        enabled,
-      });
+      await publishDeviceCommand(
+        device.deviceUid,
+        {
+          type: "device:set",
+          enabled,
+        },
+        {
+          deviceId: device.id,
+          userId,
+        },
+      );
     }
   } catch {
     return res.status(503).json({ error: "MQTT unavailable" });
@@ -607,6 +655,214 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
       ? "Device enable command sent. Waiting for telemetry update."
       : "Device disabled.",
   });
+});
+
+devicesRouter.get("/:id/commands", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+  const rawLimit = Number(req.query.limit ?? 20);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(100, Math.trunc(rawLimit)))
+    : 20;
+
+  const device = await prisma.device.findFirst({
+    where: { id: deviceId, userId },
+    select: { id: true },
+  });
+
+  if (!device) return res.status(404).json({ error: "Device not found" });
+
+  const commands = await prisma.deviceCommand.findMany({
+    where: { deviceId, userId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      deviceId: true,
+      deviceUid: true,
+      topic: true,
+      type: true,
+      payload: true,
+      status: true,
+      error: true,
+      ackPayload: true,
+      sentAt: true,
+      ackAt: true,
+      timedOutAt: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({ commands });
+});
+
+devicesRouter.get("/:id/telemetry", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+  const rawLimit = Number(req.query.limit ?? 120);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(500, Math.trunc(rawLimit)))
+    : 120;
+
+  let from: Date | undefined;
+  let to: Date | undefined;
+
+  try {
+    from = parseOptionalDateQuery(req.query.from);
+    to = parseOptionalDateQuery(req.query.to);
+  } catch {
+    return res.status(400).json({ error: "Invalid from or to date" });
+  }
+
+  const device = await prisma.device.findFirst({
+    where: { id: deviceId, userId },
+    select: { id: true },
+  });
+
+  if (!device) return res.status(404).json({ error: "Device not found" });
+
+  const telemetry = await prisma.telemetry.findMany({
+    where: {
+      deviceId,
+      ...(from || to
+        ? {
+            ts: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+    },
+    orderBy: { ts: "desc" },
+    take: limit,
+    select: telemetrySelect,
+  });
+
+  return res.json({
+    telemetry: telemetry.reverse().map((t) =>
+      mapTelemetry({
+        ...t,
+        signalDbm: t.signalDbm ?? null,
+        rssi: t.rssi ?? null,
+        snr: t.snr ?? null,
+        spreadingFactor: t.spreadingFactor ?? null,
+        batteryPct: t.batteryPct ?? null,
+        uplinkCounter: t.uplinkCounter ?? null,
+      }),
+    ),
+  });
+});
+
+devicesRouter.get("/:id/lpwan-health", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+
+  const device = await prisma.device.findFirst({
+    where: { id: deviceId, userId },
+    select: {
+      id: true,
+      name: true,
+      deviceUid: true,
+      devEui: true,
+      connectionType: true,
+      networkType: true,
+      gatewayId: true,
+      lastJoinAt: true,
+      lastSeenAt: true,
+      lastRssi: true,
+      lastSnr: true,
+      lastSpreadingFactor: true,
+      lastBatteryPct: true,
+      lastUplinkCounter: true,
+      status: true,
+    },
+  });
+
+  if (!device) return res.status(404).json({ error: "Device not found" });
+
+  if (device.connectionType !== ConnectionType.LPWAN && !device.devEui) {
+    return res.status(400).json({ error: "Device is not an LPWAN device" });
+  }
+
+  const { connectionType: _connectionType, ...healthDevice } = device;
+
+  return res.json({
+    health: calculateLpwanHealth(healthDevice),
+  });
+});
+
+devicesRouter.get("/:id/alerts", async (req, res) => {
+  const userId = req.user!.id;
+  const deviceId = req.params.id;
+  const rawLimit = Number(req.query.limit ?? 20);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(100, Math.trunc(rawLimit)))
+    : 20;
+
+  const device = await prisma.device.findFirst({
+    where: { id: deviceId, userId },
+    select: { id: true },
+  });
+
+  if (!device) return res.status(404).json({ error: "Device not found" });
+
+  const alerts = await prisma.deviceAlert.findMany({
+    where: { deviceId, userId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      deviceId: true,
+      type: true,
+      severity: true,
+      title: true,
+      message: true,
+      metadata: true,
+      isRead: true,
+      readAt: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({ alerts });
+});
+
+devicesRouter.patch("/:id/alerts/:alertId/read", async (req, res) => {
+  const userId = req.user!.id;
+  const { id: deviceId, alertId } = req.params;
+
+  const alert = await prisma.deviceAlert.findFirst({
+    where: {
+      id: alertId,
+      deviceId,
+      userId,
+    },
+    select: { id: true },
+  });
+
+  if (!alert) return res.status(404).json({ error: "Alert not found" });
+
+  const updated = await prisma.deviceAlert.update({
+    where: { id: alert.id },
+    data: {
+      isRead: true,
+      readAt: new Date(),
+    },
+    select: {
+      id: true,
+      deviceId: true,
+      type: true,
+      severity: true,
+      title: true,
+      message: true,
+      metadata: true,
+      isRead: true,
+      readAt: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({ alert: updated });
 });
 
 devicesRouter.patch("/:id", async (req, res) => {
@@ -687,7 +943,7 @@ devicesRouter.post("/:id/control/light", async (req, res) => {
 
   if (!device) return res.status(404).json({ error: "Device not found" });
 
-  if ((device.type ?? "").trim() !== "Light") {
+  if (!isLightDevice(device.type)) {
     return res.status(400).json({ error: "Device is not Light" });
   }
 
@@ -695,18 +951,49 @@ devicesRouter.post("/:id/control/light", async (req, res) => {
     return res.status(400).json({ error: "Device is offline" });
   }
 
+  let commandLog: Awaited<ReturnType<typeof publishDeviceCommand>> | null =
+    null;
+
   try {
-    await publishDeviceCommand(device.deviceUid, {
-      type: "light:set",
-      on,
-    });
+    commandLog = await publishDeviceCommand(
+      device.deviceUid,
+      {
+        type: "light:set",
+        on,
+      },
+      {
+        deviceId: device.id,
+        userId,
+      },
+    );
   } catch {
     return res.status(503).json({ error: "MQTT unavailable" });
   }
 
-  return res.status(202).json({
+  await prisma.device.update({
+    where: { id: device.id },
+    data: { lightOn: on },
+    select: { id: true },
+  });
+
+  emitRuntimeUpdate(userId, {
+    deviceId: device.id,
+    lightOn: on,
+  });
+
+  return res.status(200).json({
     ok: true,
-    message: "Command sent to device. Waiting for runtime update.",
+    device: {
+      id: device.id,
+      lightOn: on,
+    },
+    command: commandLog
+      ? {
+          id: commandLog.id,
+          status: commandLog.status,
+        }
+      : null,
+    message: "Light command sent.",
   });
 });
 
@@ -744,7 +1031,7 @@ devicesRouter.post("/:id/control/ac", async (req, res) => {
 
   if (!device) return res.status(404).json({ error: "Device not found" });
 
-  if ((device.type ?? "").trim() !== "Air Conditioner") {
+  if (!isAirConditionerDevice(device.type)) {
     return res.status(400).json({ error: "Device is not Air Conditioner" });
   }
 
@@ -757,15 +1044,50 @@ devicesRouter.post("/:id/control/ac", async (req, res) => {
   if (hasOn) command.on = on;
   if (hasTarget) command.targetTempC = Math.round(targetTempC as number);
 
+  let commandLog: Awaited<ReturnType<typeof publishDeviceCommand>> | null =
+    null;
+
   try {
-    await publishDeviceCommand(device.deviceUid, command);
+    commandLog = await publishDeviceCommand(device.deviceUid, command, {
+      deviceId: device.id,
+      userId,
+    });
   } catch {
     return res.status(503).json({ error: "MQTT unavailable" });
   }
 
-  return res.status(202).json({
+  const runtimePatch: {
+    acOn?: boolean;
+    acTargetTempC?: number;
+  } = {};
+
+  if (hasOn) runtimePatch.acOn = on as boolean;
+  if (hasTarget) runtimePatch.acTargetTempC = Math.round(targetTempC as number);
+
+  await prisma.device.update({
+    where: { id: device.id },
+    data: runtimePatch,
+    select: { id: true },
+  });
+
+  emitRuntimeUpdate(userId, {
+    deviceId: device.id,
+    ...runtimePatch,
+  });
+
+  return res.status(200).json({
     ok: true,
-    message: "Command sent to device. Waiting for runtime update.",
+    device: {
+      id: device.id,
+      ...runtimePatch,
+    },
+    command: commandLog
+      ? {
+          id: commandLog.id,
+          status: commandLog.status,
+        }
+      : null,
+    message: "Air conditioner command sent.",
   });
 });
 

@@ -14,7 +14,17 @@ const DEV_EUIS = (
 
 const DEFAULT_GATEWAY_ID = process.env.LPWAN_GATEWAY_ID || "GW-HANOI-01";
 const INTERVAL_MS = Number(process.env.LPWAN_INTERVAL_MS || 5000);
-const DEMO_ALERTS = process.env.LPWAN_DEMO_ALERTS !== "false";
+const DEMO_ALERTS = process.env.LPWAN_DEMO_ALERTS === "true";
+const DEMO_COUNTER_ANOMALIES =
+  process.env.LPWAN_DEMO_COUNTER_ANOMALIES === "true";
+const ALERT_RATE = Math.max(
+  0,
+  Math.min(1, Number(process.env.LPWAN_ALERT_RATE || 0.08)),
+);
+const COUNTER_ANOMALY_RATE = Math.max(
+  0,
+  Math.min(1, Number(process.env.LPWAN_COUNTER_ANOMALY_RATE || 0.03)),
+);
 
 type LpwanDeviceState = {
   devEui: string;
@@ -70,8 +80,8 @@ function updateSensorState(state: LpwanDeviceState) {
   state.fCnt += 1;
 
   state.temperatureC = randomBetween(
-    Math.max(20, state.temperatureC - 1.5),
-    Math.min(40, state.temperatureC + 1.5),
+    Math.max(22, state.temperatureC - 1.2),
+    Math.min(33, state.temperatureC + 1.2),
     1,
   );
 
@@ -81,7 +91,10 @@ function updateSensorState(state: LpwanDeviceState) {
     1,
   );
 
-  state.batteryPct = Math.max(0, Number((state.batteryPct - 0.03).toFixed(1)));
+  state.batteryPct = Math.max(
+    60,
+    Number((state.batteryPct - 0.01).toFixed(1)),
+  );
 }
 
 async function main() {
@@ -93,6 +106,16 @@ async function main() {
   console.log(`LoRaWAN-like simulator connecting to ${MQTT_URL}`);
   console.log(`DevEUIs: ${DEV_EUIS.join(", ")}`);
   console.log(`Default gateway: ${DEFAULT_GATEWAY_ID}`);
+  console.log(
+    `Demo alerts: ${DEMO_ALERTS ? `enabled, rate=${ALERT_RATE}` : "disabled"}`,
+  );
+  console.log(
+    `Counter anomaly demo: ${
+      DEMO_COUNTER_ANOMALIES
+        ? `enabled, rate=${COUNTER_ANOMALY_RATE}`
+        : "disabled"
+    }`,
+  );
 
   const client = mqtt.connect(MQTT_URL, {
     reconnectPeriod: 2000,
@@ -136,24 +159,42 @@ async function main() {
 
         updateSensorState(state);
 
-        const demoLowBattery = DEMO_ALERTS && state.fCnt % 10 === 0;
-        const demoWeakSignal = DEMO_ALERTS && state.fCnt % 6 === 0;
+        const demoWeakSignal = DEMO_ALERTS && Math.random() < ALERT_RATE;
+        const demoLowBattery =
+          DEMO_ALERTS && !demoWeakSignal && Math.random() < ALERT_RATE / 3;
+        const demoHighTemperature =
+          DEMO_ALERTS &&
+          !demoWeakSignal &&
+          !demoLowBattery &&
+          Math.random() < ALERT_RATE / 4;
+        const demoCounterAnomaly =
+          DEMO_COUNTER_ANOMALIES &&
+          state.fCnt > 3 &&
+          Math.random() < COUNTER_ANOMALY_RATE;
 
-        if (demoLowBattery) {
-          state.batteryPct = randomBetween(10, 19, 1);
-        }
+        const reportedTemperatureC = demoHighTemperature
+          ? randomBetween(35.5, 38, 1)
+          : state.temperatureC;
+
+        const reportedBatteryPct = demoLowBattery
+          ? randomBetween(12, 19, 1)
+          : state.batteryPct;
 
         const rssi = demoWeakSignal
           ? randomInt(-125, -116)
-          : randomInt(-112, -82);
+          : randomInt(-108, -82);
 
         const snr = demoWeakSignal
           ? randomBetween(-9, -5.5, 1)
-          : randomBetween(-3, 12, 1);
+          : randomBetween(-1, 12, 1);
 
         const spreadingFactor = demoWeakSignal
           ? randomInt(10, 12)
-          : randomInt(7, 12);
+          : randomInt(7, 10);
+
+        const uplinkCounter = demoCounterAnomaly
+          ? state.fCnt - randomInt(1, 3)
+          : state.fCnt;
 
         const uplinkTopic = `lpwan/uplink/${state.devEui}`;
 
@@ -164,12 +205,12 @@ async function main() {
           rssi,
           snr,
           spreadingFactor,
-          fCnt: state.fCnt,
+          fCnt: uplinkCounter,
           ts: new Date().toISOString(),
           payload: {
-            temperatureC: state.temperatureC,
+            temperatureC: reportedTemperatureC,
             humidityPct: state.humidityPct,
-            batteryPct: state.batteryPct,
+            batteryPct: reportedBatteryPct,
           },
         };
 
@@ -184,7 +225,7 @@ async function main() {
             }
 
             console.log(
-              `LPWAN uplink #${state.fCnt} -> ${uplinkTopic} | enabled=${state.enabled} temp=${state.temperatureC}C hum=${state.humidityPct}% rssi=${rssi}dBm snr=${snr} SF${spreadingFactor} battery=${state.batteryPct}%`,
+              `LPWAN uplink #${uplinkCounter} -> ${uplinkTopic} | enabled=${state.enabled} temp=${reportedTemperatureC}C hum=${state.humidityPct}% rssi=${rssi}dBm snr=${snr} SF${spreadingFactor} battery=${reportedBatteryPct}%${demoCounterAnomaly ? " counter-anomaly=demo" : ""}`,
             );
           },
         );

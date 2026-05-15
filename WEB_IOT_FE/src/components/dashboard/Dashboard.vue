@@ -243,6 +243,7 @@ function metricsForDevice(
       return [];
   }
 }
+
 </script>
 
 <template>

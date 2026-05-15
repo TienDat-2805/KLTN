@@ -136,15 +136,6 @@ async function chooseWired() {
   await loadWired();
 }
 
-async function chooseWifi() {
-  mode.value = "wifi";
-  selectedWifiDevice.value = null;
-  selectedLpwanDevice.value = null;
-  wifiDeviceName.value = "";
-  wifiActivationCode.value = "";
-  await loadWifi();
-}
-
 async function chooseLpwan() {
   mode.value = "lpwan";
   selectedWifiDevice.value = null;

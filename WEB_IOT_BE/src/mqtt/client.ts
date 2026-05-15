@@ -1,6 +1,12 @@
 import mqtt, { type MqttClient } from "mqtt";
 
 import { env } from "../env";
+import {
+  createDeviceCommand,
+  markDeviceCommandAcked,
+  markDeviceCommandFailed,
+  markDeviceCommandSent,
+} from "../commands/service";
 import { handleLpwanUplink } from "../lpwan/uplink";
 import { saveTelemetryByDeviceUid } from "../telemetry/service";
 
@@ -13,6 +19,17 @@ function parseUidFromTelemetryTopic(topic: string): string | null {
   if (parts[0] !== "iot") return null;
   if (parts[1] !== "devices") return null;
   if (parts[3] !== "telemetry") return null;
+  return parts[2] || null;
+}
+
+function parseUidFromCommandAckTopic(topic: string): string | null {
+  // Expected: iot/devices/<device_uid>/cmd/ack
+  const parts = topic.split("/");
+  if (parts.length < 5) return null;
+  if (parts[0] !== "iot") return null;
+  if (parts[1] !== "devices") return null;
+  if (parts[3] !== "cmd") return null;
+  if (parts[4] !== "ack") return null;
   return parts[2] || null;
 }
 
@@ -40,7 +57,11 @@ export function startMqtt() {
   client.on("connect", () => {
     console.log("MQTT connected");
 
-    const topics = [env.MQTT_TELEMETRY_TOPIC, "lpwan/uplink/+"];
+    const topics = [
+      env.MQTT_TELEMETRY_TOPIC,
+      "iot/devices/+/cmd/ack",
+      "lpwan/uplink/+",
+    ];
 
     client?.subscribe(topics, (err) => {
       if (err) {
@@ -58,6 +79,22 @@ export function startMqtt() {
 
       const text = payload.toString("utf8");
       const body = JSON.parse(text);
+
+      const ackUid = parseUidFromCommandAckTopic(topic);
+      if (ackUid) {
+        const commandId =
+          typeof body.commandId === "string" ? body.commandId.trim() : "";
+
+        if (commandId) {
+          await markDeviceCommandAcked({
+            commandId,
+            deviceUid: ackUid,
+            ackPayload: body,
+          });
+        }
+
+        return;
+      }
 
       const lpwanDevEui = parseDevEuiFromLpwanTopic(topic);
       if (lpwanDevEui) {
@@ -84,23 +121,72 @@ export function startMqtt() {
   return client;
 }
 
-export async function publishDeviceCommand(uid: string, command: unknown) {
+export async function publishDeviceCommand(
+  uid: string,
+  command: unknown,
+  meta?: {
+    deviceId?: string | null;
+    userId?: string | null;
+  },
+) {
   if (!client || !client.connected) throw new Error("MQTT unavailable");
 
   const safeUid = (uid ?? "").trim();
   if (!safeUid) throw new Error("Invalid uid");
 
   const topic = `iot/devices/${safeUid}/cmd`;
-  const payload = JSON.stringify(command ?? {});
+  const baseCommand: Record<string, unknown> =
+    command && typeof command === "object"
+      ? { ...(command as Record<string, unknown>) }
+      : { value: command };
 
-  await new Promise<void>((resolve, reject) => {
-    client?.publish(topic, payload, { qos: 0 }, (err) => {
-      if (err) reject(err);
-      else resolve();
+  const commandType =
+    typeof baseCommand["type"] === "string" ? baseCommand["type"] : "unknown";
+
+  const commandLog =
+    meta?.deviceId || meta?.userId
+      ? await createDeviceCommand({
+          deviceId: meta.deviceId ?? null,
+          userId: meta.userId ?? null,
+          deviceUid: safeUid,
+          topic,
+          type: commandType,
+          payload: baseCommand,
+        })
+      : null;
+
+  const commandWithId = commandLog
+    ? { ...baseCommand, commandId: commandLog.id }
+    : baseCommand;
+
+  const payload = JSON.stringify(commandWithId);
+
+  let sentCommandLog = commandLog;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      client?.publish(topic, payload, { qos: 0 }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
-  });
+
+    if (commandLog) {
+      sentCommandLog = await markDeviceCommandSent(commandLog.id);
+    }
+  } catch (err) {
+    if (commandLog) {
+      await markDeviceCommandFailed(
+        commandLog.id,
+        err instanceof Error ? err.message : "MQTT publish failed",
+      );
+    }
+
+    throw err;
+  }
 
   console.log(`MQTT command published: ${topic} ${payload}`);
+  return sentCommandLog;
 }
 
 export async function publishLpwanDownlink(devEui: string, command: unknown) {

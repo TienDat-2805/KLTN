@@ -1,4 +1,5 @@
 import {
+  AlertSeverity,
   ConnectionType,
   DeviceJoinStatus,
   DeviceStatus,
@@ -6,6 +7,7 @@ import {
   Prisma,
 } from "@prisma/client";
 
+import { createDeviceAlert } from "../alerts/service";
 import { prisma } from "../db/prisma";
 import { getIO, userRoom } from "../realtime/io";
 
@@ -155,35 +157,86 @@ function computeStatus(uplink: {
     : DeviceStatus.ONLINE;
 }
 
+function warningReasons(uplink: {
+  temperatureC: number;
+  batteryPct?: number;
+  rssi?: number;
+  snr?: number;
+}) {
+  const reasons: string[] = [];
+
+  if (uplink.temperatureC > HIGH_TEMPERATURE_C) {
+    reasons.push(
+      `temperature ${uplink.temperatureC}C is above ${HIGH_TEMPERATURE_C}C`,
+    );
+  }
+
+  if (uplink.batteryPct !== undefined && uplink.batteryPct < LOW_BATTERY_PCT) {
+    reasons.push(
+      `battery ${uplink.batteryPct}% is below ${LOW_BATTERY_PCT}%`,
+    );
+  }
+
+  if (uplink.rssi !== undefined && uplink.rssi < WEAK_RSSI_DBM) {
+    reasons.push(`RSSI ${uplink.rssi}dBm is weaker than ${WEAK_RSSI_DBM}dBm`);
+  }
+
+  if (uplink.snr !== undefined && uplink.snr < WEAK_SNR_DB) {
+    reasons.push(`SNR ${uplink.snr}dB is lower than ${WEAK_SNR_DB}dB`);
+  }
+
+  return reasons;
+}
+
+type CounterAnomaly = {
+  type: "DUPLICATE_UPLINK" | "REPLAY_UPLINK";
+  title: string;
+  message: string;
+  currentCounter: number;
+  lastAcceptedCounter: number;
+};
+
+function detectCounterAnomaly(
+  currentCounter: number | undefined,
+  lastAcceptedCounter: number | null | undefined,
+): CounterAnomaly | null {
+  if (currentCounter === undefined) return null;
+  if (lastAcceptedCounter === null || lastAcceptedCounter === undefined) {
+    return null;
+  }
+
+  if (currentCounter === lastAcceptedCounter) {
+    return {
+      type: "DUPLICATE_UPLINK",
+      title: "Duplicate LPWAN uplink ignored",
+      message: `Device sent uplink counter ${currentCounter} again. The backend ignored this duplicate payload to avoid storing repeated telemetry.`,
+      currentCounter,
+      lastAcceptedCounter,
+    };
+  }
+
+  if (currentCounter < lastAcceptedCounter) {
+    return {
+      type: "REPLAY_UPLINK",
+      title: "Possible replayed LPWAN uplink ignored",
+      message: `Device sent uplink counter ${currentCounter}, which is lower than the last accepted counter ${lastAcceptedCounter}. This may indicate replayed data or a device counter reset.`,
+      currentCounter,
+      lastAcceptedCounter,
+    };
+  }
+
+  return null;
+}
+
 export async function handleLpwanUplink(
   topicDevEui: string | null,
   rawPayload: unknown,
 ) {
   const uplink = parseLpwanUplink(rawPayload, topicDevEui ?? undefined);
   const status = computeStatus(uplink);
+  const reasons = status === DeviceStatus.WARNING ? warningReasons(uplink) : [];
 
   if (status === DeviceStatus.WARNING) {
-    const reasons: string[] = [];
-
-    if (uplink.temperatureC > HIGH_TEMPERATURE_C) {
-      reasons.push(`high temperature ${uplink.temperatureC}C`);
-    }
-
-    if (
-      uplink.batteryPct !== undefined &&
-      uplink.batteryPct < LOW_BATTERY_PCT
-    ) {
-      reasons.push(`low battery ${uplink.batteryPct}%`);
-    }
-
-    if (uplink.rssi !== undefined && uplink.rssi < WEAK_RSSI_DBM) {
-      reasons.push(`weak RSSI ${uplink.rssi}dBm`);
-    }
-
-    if (uplink.snr !== undefined && uplink.snr < WEAK_SNR_DB) {
-      reasons.push(`weak SNR ${uplink.snr}dB`);
-    }
-
     console.warn(`LPWAN warning for ${uplink.devEui}: ${reasons.join(", ")}`);
   }
 
@@ -198,14 +251,24 @@ export async function handleLpwanUplink(
           deviceUid: true,
           name: true,
           isEnabled: true,
+          status: true,
+          lastSeenAt: true,
+          gatewayId: true,
+          lastRssi: true,
+          lastSnr: true,
+          lastSpreadingFactor: true,
+          lastBatteryPct: true,
+          lastUplinkCounter: true,
         },
       });
+      let isNewDevice = false;
 
       if (device && !device.isEnabled) {
         return null;
       }
 
       if (!device) {
+        isNewDevice = true;
         const created = await tx.device.create({
           data: {
             deviceUid: buildAutoDeviceUid(uplink.devEui),
@@ -239,6 +302,14 @@ export async function handleLpwanUplink(
             deviceUid: true,
             name: true,
             isEnabled: true,
+            status: true,
+            lastSeenAt: true,
+            gatewayId: true,
+            lastRssi: true,
+            lastSnr: true,
+            lastSpreadingFactor: true,
+            lastBatteryPct: true,
+            lastUplinkCounter: true,
           },
         });
 
@@ -249,6 +320,23 @@ export async function handleLpwanUplink(
             uplink.devEui,
           )}`,
         );
+      }
+
+      const counterAnomaly = isNewDevice
+        ? null
+        : detectCounterAnomaly(uplink.uplinkCounter, device.lastUplinkCounter);
+
+      if (counterAnomaly) {
+        console.warn(
+          `${counterAnomaly.type} for ${uplink.devEui}: current=${counterAnomaly.currentCounter}, lastAccepted=${counterAnomaly.lastAcceptedCounter}`,
+        );
+
+        return {
+          device,
+          telemetry: null,
+          previousStatus: device.status,
+          counterAnomaly,
+        };
       }
 
       const telemetry = await tx.telemetry.create({
@@ -308,33 +396,86 @@ export async function handleLpwanUplink(
           lastSnr: true,
           lastSpreadingFactor: true,
           lastBatteryPct: true,
+          lastUplinkCounter: true,
         },
       });
 
       return {
         device: updatedDevice,
         telemetry,
+        previousStatus: device.status,
+        counterAnomaly: null,
       };
     });
 
     if (!result) return null;
 
+    if (result.device.userId && result.counterAnomaly) {
+      await createDeviceAlert({
+        deviceId: result.device.id,
+        userId: result.device.userId,
+        type: result.counterAnomaly.type,
+        severity:
+          result.counterAnomaly.type === "REPLAY_UPLINK"
+            ? AlertSeverity.CRITICAL
+            : AlertSeverity.WARNING,
+        title: result.counterAnomaly.title,
+        message: result.counterAnomaly.message,
+        metadata: {
+          devEui: uplink.devEui,
+          gatewayId: uplink.gatewayId,
+          currentCounter: result.counterAnomaly.currentCounter,
+          lastAcceptedCounter: result.counterAnomaly.lastAcceptedCounter,
+          ts: uplink.ts,
+        },
+      });
+    }
+
+    if (
+      result.device.userId &&
+      !result.counterAnomaly &&
+      result.device.status === DeviceStatus.WARNING &&
+      result.previousStatus !== DeviceStatus.WARNING
+    ) {
+      await createDeviceAlert({
+        deviceId: result.device.id,
+        userId: result.device.userId,
+        type: "LPWAN_WARNING",
+        title: "LPWAN radio or sensor warning",
+        message: reasons.length
+          ? `Device entered WARNING because ${reasons.join("; ")}.`
+          : "LPWAN device entered warning state.",
+        metadata: {
+          devEui: uplink.devEui,
+          gatewayId: uplink.gatewayId,
+          temperatureC: uplink.temperatureC,
+          batteryPct: uplink.batteryPct,
+          rssi: uplink.rssi,
+          snr: uplink.snr,
+          spreadingFactor: uplink.spreadingFactor,
+          ts: uplink.ts,
+        },
+      });
+    }
+
     if (result.device.userId) {
       const io = getIO();
       const room = userRoom(result.device.userId);
 
-      io?.to(room).emit("telemetry:new", {
-        deviceId: result.telemetry.deviceId,
-        ts: result.telemetry.ts,
-        temperatureC: result.telemetry.temperatureC,
-        humidityPct: result.telemetry.humidityPct,
-        signalDbm: result.telemetry.signalDbm,
-        rssi: result.telemetry.rssi,
-        snr: result.telemetry.snr,
-        spreadingFactor: result.telemetry.spreadingFactor,
-        batteryPct: result.telemetry.batteryPct,
-        uplinkCounter: result.telemetry.uplinkCounter,
-      });
+      if (result.telemetry) {
+        io?.to(room).emit("telemetry:new", {
+          deviceId: result.telemetry.deviceId,
+          ts: result.telemetry.ts,
+          temperatureC: result.telemetry.temperatureC,
+          humidityPct: result.telemetry.humidityPct,
+          signalDbm: result.telemetry.signalDbm,
+          rssi: result.telemetry.rssi,
+          snr: result.telemetry.snr,
+          spreadingFactor: result.telemetry.spreadingFactor,
+          batteryPct: result.telemetry.batteryPct,
+          uplinkCounter: result.telemetry.uplinkCounter,
+        });
+      }
 
       io?.to(room).emit("device:status", {
         deviceId: result.device.id,
@@ -349,6 +490,7 @@ export async function handleLpwanUplink(
         lastSnr: result.device.lastSnr,
         lastSpreadingFactor: result.device.lastSpreadingFactor,
         lastBatteryPct: result.device.lastBatteryPct,
+        lastUplinkCounter: result.device.lastUplinkCounter,
       });
     }
 

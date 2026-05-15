@@ -46,6 +46,10 @@ function topicForUid(uid: string) {
   return `iot/devices/${uid}/telemetry`;
 }
 
+function ackTopicForUid(uid: string) {
+  return `iot/devices/${uid}/cmd/ack`;
+}
+
 function parseUidFromCmdTopic(topic: string): string | null {
   const parts = topic.split("/");
 
@@ -269,6 +273,26 @@ function applyCommand(state: VirtualDeviceState, cmd: Record<string, unknown>) {
   return type;
 }
 
+function buildAckPayload(
+  state: VirtualDeviceState,
+  cmd: Record<string, unknown>,
+  type: string,
+) {
+  const commandId =
+    typeof cmd.commandId === "string" && cmd.commandId.trim()
+      ? cmd.commandId.trim()
+      : null;
+
+  return {
+    commandId,
+    uid: state.uid,
+    type: type || "unknown",
+    ok: true,
+    ts: new Date().toISOString(),
+    state: commandLogPayload(state),
+  };
+}
+
 function commandLogPayload(state: VirtualDeviceState) {
   if (state.kind === "light") {
     return {
@@ -441,10 +465,16 @@ async function main() {
     if (!state) return;
 
     const type = applyCommand(state, cmd);
+    const ack = buildAckPayload(state, cmd, type);
 
     console.log(
       `Simulator cmd for ${uid} (${type || "unknown"}): ${JSON.stringify(commandLogPayload(state))}`,
     );
+
+    if (ack.commandId) {
+      client.publish(ackTopicForUid(uid), JSON.stringify(ack), { qos: 0 });
+      console.log(`Published command ack: ${uid} ${ack.commandId}`);
+    }
 
     publishOne(uid, "command");
   });

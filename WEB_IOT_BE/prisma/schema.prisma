@@ -31,6 +31,20 @@ enum DeviceJoinStatus {
   CLAIMED
 }
 
+enum DeviceCommandStatus {
+  PENDING
+  SENT
+  ACKED
+  FAILED
+  TIMEOUT
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -38,7 +52,9 @@ model User {
   passwordHash String   @map("password_hash")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  devices Device[]
+  devices  Device[]
+  commands DeviceCommand[]
+  alerts   DeviceAlert[]
 
   @@map("users")
 }
@@ -83,6 +99,8 @@ model Device {
 
   user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   telemetry Telemetry[]
+  commands  DeviceCommand[]
+  alerts    DeviceAlert[]
 
   @@index([userId])
   @@index([connectionType])
@@ -110,4 +128,51 @@ model Telemetry {
 
   @@index([deviceId, ts])
   @@map("telemetry")
+}
+
+model DeviceCommand {
+  id         String              @id @default(uuid()) @db.Uuid
+  deviceId   String?             @db.Uuid @map("device_id")
+  userId     String?             @db.Uuid @map("user_id")
+  deviceUid  String              @map("device_uid")
+  topic      String
+  type       String
+  payload    Json
+  status     DeviceCommandStatus @default(PENDING)
+  error      String?
+  ackPayload Json?               @map("ack_payload")
+  sentAt     DateTime?           @map("sent_at")
+  ackAt      DateTime?           @map("ack_at")
+  timedOutAt DateTime?           @map("timed_out_at")
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("device_commands")
+}
+
+model DeviceAlert {
+  id        String        @id @default(uuid()) @db.Uuid
+  deviceId  String?       @db.Uuid @map("device_id")
+  userId    String?       @db.Uuid @map("user_id")
+  type      String
+  severity  AlertSeverity @default(WARNING)
+  title     String
+  message   String
+  metadata  Json?
+  isRead    Boolean       @default(false) @map("is_read")
+  readAt    DateTime?     @map("read_at")
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, createdAt])
+  @@index([userId, isRead, createdAt])
+  @@index([severity, createdAt])
+  @@map("device_alerts")
 }

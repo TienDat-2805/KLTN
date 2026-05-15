@@ -1,5 +1,6 @@
 import { DeviceStatus, Prisma } from "@prisma/client";
 
+import { createDeviceAlert } from "../alerts/service";
 import { prisma } from "../db/prisma";
 import { getIO, userRoom } from "../realtime/io";
 
@@ -142,6 +143,7 @@ export async function saveTelemetryByDeviceId(
           id: true,
           userId: true,
           isEnabled: true,
+          status: true,
         },
       });
 
@@ -225,6 +227,25 @@ export async function saveTelemetryByDeviceId(
     });
 
     if (!result) return null;
+
+    if (
+      result.device.userId &&
+      result.status === DeviceStatus.WARNING &&
+      result.device.status !== DeviceStatus.WARNING
+    ) {
+      await createDeviceAlert({
+        deviceId,
+        userId: result.device.userId,
+        type: "HIGH_TEMPERATURE",
+        title: "High temperature detected",
+        message: `Temperature reached ${telemetry.temperatureC}C, above the 35C warning threshold.`,
+        metadata: {
+          temperatureC: telemetry.temperatureC,
+          thresholdC: 35,
+          ts: result.lastSeenAt,
+        },
+      });
+    }
 
     if (result.device.userId) {
       const io = getIO();
