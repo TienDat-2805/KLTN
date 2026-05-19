@@ -116,10 +116,6 @@ function connectionBadgeClasses(connection: string) {
     return "bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200";
   }
 
-  if (value.includes("WIFI")) {
-    return "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200";
-  }
-
   if (value.includes("WIRED")) {
     return "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
   }

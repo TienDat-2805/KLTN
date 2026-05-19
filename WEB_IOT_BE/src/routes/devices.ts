@@ -6,12 +6,13 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db/prisma";
+import { protocolAdapters } from "../ingestion/protocols";
 import { calculateLpwanHealth } from "../lpwan/health";
 import { requireAuth } from "../middleware/requireAuth";
 import { publishDeviceCommand, publishLpwanDownlink } from "../mqtt/client";
 import { getIO, userRoom } from "../realtime/io";
 
-type DiscoverMethod = "wired" | "wifi" | "lpwan";
+type DiscoverMethod = "wired" | "lpwan";
 
 type LatestTelemetry = {
   ts: Date;
@@ -26,7 +27,7 @@ type LatestTelemetry = {
 };
 
 function discoverMethodFromQuery(value: unknown): DiscoverMethod | null {
-  if (value === "wired" || value === "wifi" || value === "lpwan") {
+  if (value === "wired" || value === "lpwan") {
     return value;
   }
 
@@ -83,7 +84,6 @@ function mapDiscoverDevice<T extends { userId: string | null }>(
 
 function getConnectionTypeFromMethod(method: DiscoverMethod) {
   if (method === "wired") return ConnectionType.WIRED;
-  if (method === "wifi") return ConnectionType.WIFI;
   return ConnectionType.LPWAN;
 }
 
@@ -150,10 +150,17 @@ async function enableLpwanVirtualDevice(devEui: string | null | undefined) {
   if (!safeDevEui) return;
 
   try {
-    await publishLpwanDownlink(safeDevEui, {
-      type: "lpwan:set",
-      enabled: true,
-    });
+    await publishLpwanDownlink(
+      safeDevEui,
+      {
+        type: "lpwan:set",
+        enabled: true,
+      },
+      {
+        qos: 1,
+        retain: true,
+      },
+    );
   } catch (err) {
     console.warn(`Could not enable LPWAN device ${safeDevEui}:`, err);
   }
@@ -164,10 +171,17 @@ async function disableLpwanVirtualDevice(devEui: string | null | undefined) {
   if (!safeDevEui) return;
 
   try {
-    await publishLpwanDownlink(safeDevEui, {
-      type: "lpwan:set",
-      enabled: false,
-    });
+    await publishLpwanDownlink(
+      safeDevEui,
+      {
+        type: "lpwan:set",
+        enabled: false,
+      },
+      {
+        qos: 1,
+        retain: true,
+      },
+    );
   } catch (err) {
     console.warn(`Could not disable LPWAN device ${safeDevEui}:`, err);
   }
@@ -198,6 +212,7 @@ const baseDeviceSelect = {
   acTargetTempC: true,
   cameraFrameUrl: true,
 
+  isEnabled: true,
   status: true,
   lastSeenAt: true,
   createdAt: true,
@@ -280,7 +295,7 @@ devicesRouter.get("/discover", async (req, res) => {
   if (!method) {
     return res
       .status(400)
-      .json({ error: "Invalid method (use wired|wifi|lpwan)" });
+      .json({ error: "Invalid method (use wired|lpwan)" });
   }
 
   const connectionType = getConnectionTypeFromMethod(method);
@@ -295,6 +310,12 @@ devicesRouter.get("/discover", async (req, res) => {
 
   return res.json({
     devices: devices.map((device) => mapDiscoverDevice(device, userId)),
+  });
+});
+
+devicesRouter.get("/protocols", (_req, res) => {
+  return res.json({
+    protocols: protocolAdapters,
   });
 });
 
@@ -332,8 +353,16 @@ devicesRouter.post("/claim", async (req, res) => {
     where: { id: found.id },
     data: {
       userId,
+      isEnabled: true,
       ...(nextName ? { name: nextName } : {}),
       joinStatus: DeviceJoinStatus.CLAIMED,
+      ...(found.connectionType === ConnectionType.LPWAN
+        ? {
+            status: DeviceStatus.OFFLINE,
+            lastSeenAt: null,
+            lastUplinkCounter: null,
+          }
+        : {}),
     },
     select: baseDeviceSelect,
   });
@@ -343,73 +372,6 @@ devicesRouter.post("/claim", async (req, res) => {
   } else {
     await enableStandardVirtualDevice(found.deviceUid);
   }
-
-  const { userId: _userId, ...safeDevice } = updated;
-
-  return res.status(200).json({
-    device: {
-      ...safeDevice,
-      latestTelemetry: null,
-    },
-    message: "Device claimed. Waiting for telemetry update...",
-  });
-});
-
-devicesRouter.post("/claim-wifi", async (req, res) => {
-  const userId = req.user!.id;
-  const { deviceUid, activationCode, name } = (req.body ?? {}) as {
-    deviceUid?: unknown;
-    activationCode?: unknown;
-    name?: unknown;
-  };
-
-  if (typeof deviceUid !== "string" || !deviceUid.trim()) {
-    return res.status(400).json({ error: "Missing deviceUid" });
-  }
-
-  if (typeof activationCode !== "string" || !activationCode.trim()) {
-    return res.status(400).json({ error: "Missing activationCode" });
-  }
-
-  const nextName = typeof name === "string" ? name.trim() : "";
-  if (!nextName) return res.status(400).json({ error: "Missing name" });
-
-  const found = await prisma.device.findUnique({
-    where: { deviceUid: deviceUid.trim() },
-    select: {
-      id: true,
-      deviceUid: true,
-      activationCode: true,
-      userId: true,
-      connectionType: true,
-    },
-  });
-
-  if (!found) return res.status(404).json({ error: "Device not found" });
-
-  if (found.connectionType !== ConnectionType.WIFI) {
-    return res.status(400).json({ error: "Device is not a Wi-Fi device" });
-  }
-
-  if (found.userId) {
-    return res.status(400).json({ error: "Device already claimed" });
-  }
-
-  if (found.activationCode !== activationCode.trim()) {
-    return res.status(400).json({ error: "Invalid activation code" });
-  }
-
-  const updated = await prisma.device.update({
-    where: { id: found.id },
-    data: {
-      userId,
-      name: nextName,
-      joinStatus: DeviceJoinStatus.CLAIMED,
-    },
-    select: baseDeviceSelect,
-  });
-
-  await enableStandardVirtualDevice(found.deviceUid);
 
   const { userId: _userId, ...safeDevice } = updated;
 
@@ -470,8 +432,12 @@ devicesRouter.post("/claim-lpwan", async (req, res) => {
     where: { id: found.id },
     data: {
       userId,
+      isEnabled: true,
       name: nextName,
       joinStatus: DeviceJoinStatus.CLAIMED,
+      status: DeviceStatus.OFFLINE,
+      lastSeenAt: null,
+      lastUplinkCounter: null,
     },
     select: baseDeviceSelect,
   });
@@ -538,6 +504,7 @@ devicesRouter.post("/claim-wired", async (req, res) => {
     where: { id: found.id },
     data: {
       userId,
+      isEnabled: true,
       joinStatus: DeviceJoinStatus.CLAIMED,
     },
     select: baseDeviceSelect,
@@ -582,17 +549,12 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
     return res.status(404).json({ error: "Device not found" });
   }
 
-  try {
-    if (device.connectionType === ConnectionType.LPWAN) {
-      if (!device.devEui) {
-        return res.status(400).json({ error: "LPWAN device missing devEui" });
-      }
+  if (device.connectionType === ConnectionType.LPWAN && !device.devEui) {
+    return res.status(400).json({ error: "LPWAN device missing devEui" });
+  }
 
-      await publishLpwanDownlink(device.devEui, {
-        type: "lpwan:set",
-        enabled,
-      });
-    } else {
+  if (device.connectionType !== ConnectionType.LPWAN) {
+    try {
       await publishDeviceCommand(
         device.deviceUid,
         {
@@ -604,9 +566,9 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
           userId,
         },
       );
+    } catch {
+      return res.status(503).json({ error: "MQTT unavailable" });
     }
-  } catch {
-    return res.status(503).json({ error: "MQTT unavailable" });
   }
 
   const updated = await prisma.device.update({
@@ -615,7 +577,9 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
       isEnabled: enabled,
       status: DeviceStatus.OFFLINE,
       ...(enabled
-        ? {}
+        ? device.connectionType === ConnectionType.LPWAN
+          ? { lastUplinkCounter: null }
+          : {}
         : {
             lastSeenAt: null,
             lightOn: false,
@@ -634,6 +598,43 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
 
   const latestTelemetry = updated.telemetry[0] ?? null;
   const { telemetry, userId: _userId, ...deviceWithoutTelemetry } = updated;
+  let lpwanDownlinkSent: boolean | undefined;
+  let lpwanDownlinkError: string | undefined;
+
+  if (device.connectionType === ConnectionType.LPWAN && device.devEui) {
+    try {
+      await publishLpwanDownlink(
+        device.devEui,
+        {
+          type: "lpwan:set",
+          enabled,
+        },
+        {
+          qos: 1,
+          retain: true,
+        },
+      );
+      lpwanDownlinkSent = true;
+    } catch (err) {
+      lpwanDownlinkSent = false;
+      lpwanDownlinkError =
+        err instanceof Error ? err.message : "MQTT downlink unavailable";
+      console.warn(
+        `Could not publish LPWAN ${enabled ? "enable" : "disable"} downlink for ${device.devEui}: ${lpwanDownlinkError}`,
+      );
+    }
+  }
+
+  const lpwanMessage =
+    device.connectionType === ConnectionType.LPWAN
+      ? enabled
+        ? lpwanDownlinkSent === false
+          ? "LPWAN device enabled in backend. Downlink could not be sent; check MQTT broker or simulator."
+          : "LPWAN device enabled. Waiting for next uplink."
+        : lpwanDownlinkSent === false
+          ? "LPWAN device disabled in backend. Downlink could not be sent; backend will ignore uplinks until enabled again."
+          : "LPWAN device disabled."
+      : null;
 
   return res.status(200).json({
     device: {
@@ -651,9 +652,15 @@ devicesRouter.patch("/:id/enabled", async (req, res) => {
           })
         : null,
     },
-    message: enabled
-      ? "Device enable command sent. Waiting for telemetry update."
-      : "Device disabled.",
+    message:
+      lpwanMessage ??
+      (enabled
+        ? "Device enable command sent. Waiting for telemetry update."
+        : "Device disabled."),
+    ...(lpwanDownlinkSent === undefined
+      ? {}
+      : { downlinkSent: lpwanDownlinkSent }),
+    ...(lpwanDownlinkError ? { downlinkError: lpwanDownlinkError } : {}),
   });
 });
 
@@ -1110,7 +1117,6 @@ devicesRouter.post("/:id/control/lpwan", async (req, res) => {
       id: true,
       devEui: true,
       connectionType: true,
-      status: true,
     },
   });
 
@@ -1122,20 +1128,79 @@ devicesRouter.post("/:id/control/lpwan", async (req, res) => {
     return res.status(400).json({ error: "LPWAN device missing devEui" });
   }
 
+  const updated = await prisma.device.update({
+    where: { id: device.id },
+    data: {
+      isEnabled: enabled,
+      status: DeviceStatus.OFFLINE,
+      ...(enabled
+        ? { lastUplinkCounter: null }
+        : { lastSeenAt: null }),
+    },
+    select: {
+      ...baseDeviceSelect,
+      telemetry: {
+        orderBy: { ts: "desc" },
+        take: 1,
+        select: telemetrySelect,
+      },
+    },
+  });
+
+  let downlinkSent = false;
+  let downlinkError: string | undefined;
+
   try {
-    await publishLpwanDownlink(device.devEui, {
-      type: "lpwan:set",
-      enabled,
-    });
-  } catch {
-    return res.status(503).json({ error: "MQTT unavailable" });
+    await publishLpwanDownlink(
+      device.devEui,
+      {
+        type: "lpwan:set",
+        enabled,
+      },
+      {
+        qos: 1,
+        retain: true,
+      },
+    );
+
+    downlinkSent = true;
+  } catch (err) {
+    downlinkError =
+      err instanceof Error ? err.message : "MQTT downlink unavailable";
+    console.warn(
+      `Could not publish LPWAN ${enabled ? "enable" : "disable"} downlink for ${device.devEui}: ${downlinkError}`,
+    );
   }
 
-  return res.status(202).json({
+  const latestTelemetry = updated.telemetry[0] ?? null;
+  const { telemetry, userId: _userId, ...deviceWithoutTelemetry } = updated;
+
+  return res.status(200).json({
     ok: true,
+    device: {
+      ...deviceWithoutTelemetry,
+      lastSeenAt: updated.lastSeenAt ?? latestTelemetry?.ts ?? null,
+      latestTelemetry: latestTelemetry
+        ? mapTelemetry({
+            ...latestTelemetry,
+            signalDbm: latestTelemetry.signalDbm ?? null,
+            rssi: latestTelemetry.rssi ?? null,
+            snr: latestTelemetry.snr ?? null,
+            spreadingFactor: latestTelemetry.spreadingFactor ?? null,
+            batteryPct: latestTelemetry.batteryPct ?? null,
+            uplinkCounter: latestTelemetry.uplinkCounter ?? null,
+          })
+        : null,
+    },
     message: enabled
-      ? "LPWAN enable command sent. Waiting for next uplink."
-      : "LPWAN disable command sent. Device will stop sending uplinks.",
+      ? downlinkSent
+        ? "LPWAN device enabled. Waiting for next uplink."
+        : "LPWAN device enabled in backend. Downlink could not be sent; check MQTT broker or simulator."
+      : downlinkSent
+        ? "LPWAN device disabled."
+        : "LPWAN device disabled in backend. Downlink could not be sent; backend will ignore uplinks until enabled again.",
+    downlinkSent,
+    ...(downlinkError ? { downlinkError } : {}),
   });
 });
 

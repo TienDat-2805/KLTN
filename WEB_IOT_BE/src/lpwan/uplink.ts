@@ -199,6 +199,7 @@ type CounterAnomaly = {
 function detectCounterAnomaly(
   currentCounter: number | undefined,
   lastAcceptedCounter: number | null | undefined,
+  allowCounterReset = false,
 ): CounterAnomaly | null {
   if (currentCounter === undefined) return null;
   if (lastAcceptedCounter === null || lastAcceptedCounter === undefined) {
@@ -216,6 +217,8 @@ function detectCounterAnomaly(
   }
 
   if (currentCounter < lastAcceptedCounter) {
+    if (allowCounterReset) return null;
+
     return {
       type: "REPLAY_UPLINK",
       title: "Possible replayed LPWAN uplink ignored",
@@ -322,9 +325,18 @@ export async function handleLpwanUplink(
         );
       }
 
+      const allowCounterReset =
+        device.status === DeviceStatus.OFFLINE &&
+        uplink.uplinkCounter !== undefined &&
+        uplink.uplinkCounter <= 5;
+
       const counterAnomaly = isNewDevice
         ? null
-        : detectCounterAnomaly(uplink.uplinkCounter, device.lastUplinkCounter);
+        : detectCounterAnomaly(
+            uplink.uplinkCounter,
+            device.lastUplinkCounter,
+            allowCounterReset,
+          );
 
       if (counterAnomaly) {
         console.warn(

@@ -143,11 +143,23 @@ function canControlDeviceEnabled(d: Device) {
 }
 
 function deviceEnabled(d: Device) {
+  if (d.connectionType === "LPWAN") {
+    return store.lpwanUplinkEnabledByDeviceId[d.id] ?? (d.isEnabled !== false);
+  }
+
   return d.isEnabled !== false;
 }
 
 async function toggleDeviceEnabled(d: Device) {
   if (!canControlDeviceEnabled(d)) return;
+
+  if (d.connectionType === "LPWAN") {
+    await store.setLpwanEnabled({
+      id: d.id,
+      enabled: !deviceEnabled(d),
+    });
+    return;
+  }
 
   await store.setDeviceEnabled({
     id: d.id,

@@ -7,7 +7,7 @@ import { formatRelativeTime } from "../lib/time";
 import { useAuthStore } from "./authStore";
 
 export type DeviceStatus = "ONLINE" | "OFFLINE" | "WARNING";
-export type ConnectionType = "WIFI" | "WIRED" | "LPWAN";
+export type ConnectionType = "WIRED" | "LPWAN";
 export type NetworkType = "LORAWAN" | "NB_IOT" | "LTE_M";
 export type DeviceJoinStatus = "UNCLAIMED" | "CLAIMED";
 
@@ -293,10 +293,7 @@ export const useDeviceStore = defineStore("device", {
           if (!this.cameraFrameWindowByDeviceId[d.id]) {
             this.cameraFrameWindowByDeviceId[d.id] = [];
           }
-          if (
-            d.connectionType === "LPWAN" &&
-            this.lpwanUplinkEnabledByDeviceId[d.id] === undefined
-          ) {
+          if (d.connectionType === "LPWAN") {
             this.lpwanUplinkEnabledByDeviceId[d.id] = d.isEnabled !== false;
           }
         }
@@ -418,6 +415,9 @@ export const useDeviceStore = defineStore("device", {
     applyStatus(payload: DeviceStatusEvent) {
       const device = this.devices.find((d) => d.id === payload.deviceId);
       if (!device) return;
+      if (device.isEnabled === false && payload.status !== "OFFLINE") {
+        return;
+      }
       const prevStatus = device.status;
       device.status = payload.status;
       device.lastSeenAt = payload.lastSeenAt;
@@ -521,11 +521,11 @@ export const useDeviceStore = defineStore("device", {
       while (window.length > 30) window.shift();
       this.cameraFrameWindowByDeviceId[payload.deviceId] = window;
     },
-    async discoverDevices(input: { method: "wired" | "wifi" | "lpwan" }) {
+    async discoverDevices(input: { method: "wired" | "lpwan" }) {
       const auth = useAuthStore();
       if (!auth.accessToken) throw new Error("Not authenticated");
       const method = input?.method;
-      if (method !== "wired" && method !== "wifi" && method !== "lpwan")
+      if (method !== "wired" && method !== "lpwan")
         throw new Error("Invalid discovery method");
       const data = await apiRequest<{ devices: DiscoverableDevice[] }>(
         "/devices/discover?method=" + method,
@@ -573,51 +573,6 @@ export const useDeviceStore = defineStore("device", {
           : new Error("Failed to connect device");
       }
     },
-    async claimWifiDevice(input: {
-      deviceUid: string;
-      activationCode: string;
-      name: string;
-    }) {
-      const auth = useAuthStore();
-      if (!auth.accessToken) throw new Error("Not authenticated");
-      const deviceUid = (input?.deviceUid ?? "").trim();
-      const activationCode = (input?.activationCode ?? "").trim();
-      const name = (input?.name ?? "").trim();
-      if (!deviceUid) throw new Error("Device is required");
-      if (!name) throw new Error("Device name is required");
-      if (!activationCode) throw new Error("Activation code is required");
-      try {
-        const data = await apiRequest<{ device: Device; message?: string }>(
-          "/devices/claim-wifi",
-          {
-            method: "POST",
-            token: auth.accessToken,
-            body: { deviceUid, activationCode, name },
-          },
-        );
-        this.devices = [
-          data.device,
-          ...this.devices.filter((d) => d.id !== data.device.id),
-        ];
-        this.telemetryWindowByDeviceId[data.device.id] = data.device
-          .latestTelemetry
-          ? [data.device.latestTelemetry]
-          : [];
-        const label = (data.device.name ?? "").trim() || data.device.type;
-        this.pushNotification({
-          kind: "device-added",
-          deviceId: data.device.id,
-          title: "Device added",
-          message: label,
-        });
-        return true;
-      } catch (err) {
-        throw err instanceof Error
-          ? err
-          : new Error("Failed to connect device");
-      }
-    },
-
     async claimLpwanDevice(input: {
       devEui: string;
       activationCode: string;
@@ -898,11 +853,6 @@ export const useDeviceStore = defineStore("device", {
         return false;
       }
 
-      if (device.connectionType === "WIFI") {
-        this.error = "Wi-Fi device control is not used in this version";
-        return false;
-      }
-
       const previousEnabled = device.isEnabled;
       const previousStatus = device.status;
       const previousLastSeenAt = device.lastSeenAt;
@@ -928,7 +878,12 @@ export const useDeviceStore = defineStore("device", {
       }
 
       try {
-        const data = await apiRequest<{ device?: Device; message?: string }>(
+        const data = await apiRequest<{
+          device?: Device;
+          message?: string;
+          downlinkSent?: boolean;
+          downlinkError?: string;
+        }>(
           `/devices/${input.id}/enabled`,
           {
             method: "PATCH",
@@ -940,6 +895,7 @@ export const useDeviceStore = defineStore("device", {
         if (data.device) {
           const syncedDevice: Device = {
             ...data.device,
+            isEnabled: data.device.isEnabled ?? input.enabled,
             ...(input.enabled
               ? {}
               : {
@@ -955,9 +911,24 @@ export const useDeviceStore = defineStore("device", {
           );
 
           if (data.device.connectionType === "LPWAN") {
-            this.lpwanUplinkEnabledByDeviceId[data.device.id] =
-              data.device.isEnabled !== false;
+            this.lpwanUplinkEnabledByDeviceId[syncedDevice.id] =
+              syncedDevice.isEnabled !== false;
           }
+        }
+
+        if (
+          data.downlinkSent === false &&
+          data.device?.connectionType === "LPWAN"
+        ) {
+          this.pushNotification({
+            kind: "device-warning",
+            deviceId: data.device.id,
+            title: "LPWAN downlink not sent",
+            message:
+              data.message ||
+              data.downlinkError ||
+              "Backend state was updated, but MQTT downlink could not be sent.",
+          });
         }
 
         return true;
@@ -986,7 +957,101 @@ export const useDeviceStore = defineStore("device", {
       }
     },
     async setLpwanEnabled(input: { id: string; enabled: boolean }) {
-      return this.setDeviceEnabled(input);
+      const auth = useAuthStore();
+
+      if (!auth.accessToken) return false;
+      if (!input?.id) return false;
+
+      this.error = null;
+
+      const device = this.devices.find((d) => d.id === input.id);
+
+      if (!device) {
+        this.error = "Device not found";
+        return false;
+      }
+
+      const previousEnabled = device.isEnabled;
+      const previousStatus = device.status;
+      const previousLastSeenAt = device.lastSeenAt;
+      const previousLpwanEnabled = this.lpwanUplinkEnabledByDeviceId[input.id];
+
+      this.deviceEnabledBusyByDeviceId[input.id] = true;
+      this.lpwanBusyByDeviceId[input.id] = true;
+      this.lpwanUplinkEnabledByDeviceId[input.id] = input.enabled;
+
+      device.isEnabled = input.enabled;
+
+      if (!input.enabled) {
+        device.status = "OFFLINE";
+        device.lastSeenAt = null;
+      }
+
+      try {
+        const data = await apiRequest<{
+          device?: Device;
+          message?: string;
+          downlinkSent?: boolean;
+          downlinkError?: string;
+        }>(`/devices/${input.id}/control/lpwan`, {
+          method: "POST",
+          token: auth.accessToken,
+          body: { enabled: input.enabled },
+        });
+
+        if (data.device) {
+          const syncedDevice: Device = {
+            ...data.device,
+            isEnabled: data.device.isEnabled ?? input.enabled,
+            ...(input.enabled
+              ? {}
+              : {
+                  status: "OFFLINE",
+                  lastSeenAt: null,
+                }),
+          };
+
+          this.devices = this.devices.map((d) =>
+            d.id === input.id ? { ...d, ...syncedDevice } : d,
+          );
+
+          this.lpwanUplinkEnabledByDeviceId[syncedDevice.id] =
+            syncedDevice.isEnabled !== false;
+        }
+
+        if (data.downlinkSent === false) {
+          this.pushNotification({
+            kind: "device-warning",
+            deviceId: input.id,
+            title: "LPWAN downlink not sent",
+            message:
+              data.message ||
+              data.downlinkError ||
+              "Backend state was updated, but MQTT downlink could not be sent.",
+          });
+        }
+
+        this.error = null;
+        return true;
+      } catch (err) {
+        device.isEnabled = previousEnabled;
+        device.status = previousStatus;
+        device.lastSeenAt = previousLastSeenAt;
+
+        if (previousLpwanEnabled === undefined) {
+          delete this.lpwanUplinkEnabledByDeviceId[input.id];
+        } else {
+          this.lpwanUplinkEnabledByDeviceId[input.id] = previousLpwanEnabled;
+        }
+
+        this.error =
+          err instanceof Error ? err.message : "Failed to control LPWAN device";
+
+        return false;
+      } finally {
+        this.deviceEnabledBusyByDeviceId[input.id] = false;
+        this.lpwanBusyByDeviceId[input.id] = false;
+      }
     },
   },
 });

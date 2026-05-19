@@ -189,7 +189,11 @@ export async function publishDeviceCommand(
   return sentCommandLog;
 }
 
-export async function publishLpwanDownlink(devEui: string, command: unknown) {
+export async function publishLpwanDownlink(
+  devEui: string,
+  command: unknown,
+  options: { retain?: boolean; qos?: 0 | 1 | 2 } = {},
+) {
   if (!client || !client.connected) throw new Error("MQTT unavailable");
 
   const safeDevEui = (devEui ?? "").trim().toUpperCase();
@@ -202,10 +206,18 @@ export async function publishLpwanDownlink(devEui: string, command: unknown) {
   const payload = JSON.stringify(command ?? {});
 
   await new Promise<void>((resolve, reject) => {
-    client?.publish(topic, payload, { qos: 0 }, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
+    client?.publish(
+      topic,
+      payload,
+      {
+        qos: options.qos ?? 0,
+        retain: options.retain ?? false,
+      },
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      },
+    );
   });
 
   console.log(`LPWAN downlink published: ${topic} ${payload}`);

@@ -8,7 +8,7 @@ import {
 
 const store = useDeviceStore();
 
-type SearchMode = "wired" | "wifi" | "lpwan";
+type SearchMode = "wired" | "lpwan";
 
 const mode = ref<SearchMode | null>(null);
 const error = ref<string | null>(null);
@@ -16,12 +16,6 @@ const noticeVisible = ref(false);
 
 const loadingWired = ref(false);
 const wiredDevices = ref<DiscoverableDevice[]>([]);
-
-const loadingWifi = ref(false);
-const wifiDevices = ref<DiscoverableDevice[]>([]);
-const selectedWifiDevice = ref<DiscoverableDevice | null>(null);
-const wifiDeviceName = ref("");
-const wifiActivationCode = ref("");
 
 const loadingLpwan = ref(false);
 const lpwanDevices = ref<DiscoverableDevice[]>([]);
@@ -31,7 +25,6 @@ const lpwanActivationCode = ref("");
 const busyConnectLpwanDevEui = ref<string | null>(null);
 
 const busyConnectWiredUid = ref<string | null>(null);
-const busyConnectWifiUid = ref<string | null>(null);
 
 let noticeTimer: number | null = null;
 
@@ -93,24 +86,6 @@ async function loadWired() {
   }
 }
 
-async function loadWifi() {
-  if (loadingWifi.value) return;
-
-  loadingWifi.value = true;
-  error.value = null;
-
-  try {
-    wifiDevices.value = await store.discoverDevices({ method: "wifi" });
-  } catch (err) {
-    showError(
-      err instanceof Error ? err.message : "Failed to discover Wi-Fi devices",
-      3000,
-    );
-  } finally {
-    loadingWifi.value = false;
-  }
-}
-
 async function loadLpwan() {
   if (loadingLpwan.value) return;
 
@@ -131,26 +106,16 @@ async function loadLpwan() {
 
 async function chooseWired() {
   mode.value = "wired";
-  selectedWifiDevice.value = null;
   selectedLpwanDevice.value = null;
   await loadWired();
 }
 
 async function chooseLpwan() {
   mode.value = "lpwan";
-  selectedWifiDevice.value = null;
   selectedLpwanDevice.value = null;
   lpwanDeviceName.value = "";
   lpwanActivationCode.value = "";
   await loadLpwan();
-}
-
-function startWifiConnect(d: DiscoverableDevice) {
-  if (!canClaimDevice(d)) return;
-
-  selectedWifiDevice.value = d;
-  wifiDeviceName.value = (d.name ?? "").trim() || "";
-  wifiActivationCode.value = "";
 }
 
 function startLpwanConnect(d: DiscoverableDevice) {
@@ -180,39 +145,6 @@ async function connectWired(d: DiscoverableDevice) {
     );
   } finally {
     busyConnectWiredUid.value = null;
-  }
-}
-
-async function connectWifi() {
-  const d = selectedWifiDevice.value;
-  if (!d?.deviceUid) return;
-  if (!canClaimDevice(d)) return;
-  if (busyConnectWifiUid.value) return;
-
-  busyConnectWifiUid.value = d.deviceUid;
-  error.value = null;
-
-  try {
-    await store.claimWifiDevice({
-      deviceUid: d.deviceUid,
-      name: wifiDeviceName.value,
-      activationCode: wifiActivationCode.value,
-    });
-
-    showSuccess(3000);
-
-    selectedWifiDevice.value = null;
-    wifiDeviceName.value = "";
-    wifiActivationCode.value = "";
-
-    await loadWifi();
-  } catch (err) {
-    showError(
-      err instanceof Error ? err.message : "Failed to connect device",
-      3000,
-    );
-  } finally {
-    busyConnectWifiUid.value = null;
   }
 }
 
@@ -357,7 +289,7 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
       </div>
     </section>
 
-    <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <button
         type="button"
         class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
@@ -388,38 +320,6 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
           Hiển thị thiết bị kết nối trực tiếp bằng Ethernet/cable.
         </p>
       </button>
-      <!-- Nút add thiết bị wifi -->
-      <!-- <button
-        type="button"
-        class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        :class="
-          mode === 'wifi'
-            ? 'border-blue-300 ring-4 ring-blue-50'
-            : 'border-slate-200 hover:border-blue-200'
-        "
-        @click="chooseWifi"
-      >
-        <div class="flex items-center justify-between gap-3">
-          <div
-            class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700"
-          >
-            <span class="text-lg font-black">Wi</span>
-          </div>
-
-          <span
-            v-if="mode === 'wifi'"
-            class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
-          >
-            Selected
-          </span>
-        </div>
-
-        <p class="mt-4 text-base font-bold text-slate-900">Find on Wi-Fi</p>
-        <p class="mt-2 text-sm leading-6 text-slate-500">
-          Tìm các thiết bị đang nằm trong cùng mạng Wi-Fi.
-        </p>
-      </button> -->
-
       <button
         type="button"
         class="rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
@@ -535,147 +435,6 @@ function actionText(d: DiscoverableDevice, defaultText: string) {
                 )
               }}
             </button>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <section
-      v-else-if="mode === 'wifi'"
-      class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-    >
-      <div class="border-b border-slate-100 px-5 py-4">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h3 class="text-base font-bold text-slate-900">Wi-Fi devices</h3>
-            <p class="mt-1 text-sm text-slate-500">
-              Select a discovered Wi-Fi device and enter its activation code.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="loadingWifi"
-            @click="loadWifi"
-          >
-            {{ loadingWifi ? "Refreshing…" : "Refresh" }}
-          </button>
-        </div>
-      </div>
-
-      <div class="p-5">
-        <p v-if="loadingWifi" class="text-sm text-slate-500">Scanning…</p>
-
-        <p
-          v-else-if="wifiDevices.length === 0"
-          class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500"
-        >
-          No Wi-Fi devices found.
-        </p>
-
-        <ul v-else class="space-y-3">
-          <li
-            v-for="d in wifiDevices"
-            :key="d.id"
-            class="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4"
-          >
-            <div
-              class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <p class="text-sm font-bold text-slate-900">
-                    {{ d.name || d.type }}
-                  </p>
-
-                  <span
-                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
-                    :class="statusClass(d.status)"
-                  >
-                    {{ signalStatusText(d.status) }}
-                  </span>
-
-                  <span
-                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
-                    :class="claimStatusClass(d)"
-                  >
-                    {{ claimStatusText(d) }}
-                  </span>
-                </div>
-
-                <p class="mt-1 text-xs text-slate-500">
-                  {{ d.deviceUid }} · {{ d.model }}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                :disabled="!canClaimDevice(d)"
-                @click="startWifiConnect(d)"
-              >
-                {{ actionText(d, "Connect") }}
-              </button>
-            </div>
-
-            <div
-              v-if="selectedWifiDevice?.deviceUid === d.deviceUid"
-              class="mt-4 rounded-2xl border border-slate-200 bg-white p-4"
-            >
-              <p class="text-sm font-bold text-slate-900">Enter device info</p>
-
-              <form class="mt-4 space-y-4" @submit.prevent="connectWifi">
-                <div>
-                  <label class="text-sm font-semibold text-slate-700">
-                    Device name
-                  </label>
-                  <input
-                    v-model="wifiDeviceName"
-                    required
-                    type="text"
-                    placeholder="e.g. Living Room Sensor"
-                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
-                  />
-                </div>
-
-                <div>
-                  <label class="text-sm font-semibold text-slate-700">
-                    Activation code
-                  </label>
-                  <input
-                    v-model="wifiActivationCode"
-                    required
-                    type="text"
-                    autocomplete="one-time-code"
-                    placeholder="e.g. XYZ789"
-                    class="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
-                  />
-                </div>
-
-                <div class="flex items-center justify-end gap-3 pt-1">
-                  <button
-                    type="button"
-                    class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-                    @click="selectedWifiDevice = null"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    type="submit"
-                    :disabled="busyConnectWifiUid === d.deviceUid"
-                    class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                  >
-                    {{
-                      busyConnectWifiUid === d.deviceUid
-                        ? "Connecting…"
-                        : "Connect"
-                    }}
-                  </button>
-                </div>
-              </form>
-            </div>
           </li>
         </ul>
       </div>

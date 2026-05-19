@@ -17,7 +17,6 @@ const router = useRouter();
 function connectionLabel(connectionType: string | undefined) {
   if (connectionType === "LPWAN") return "LPWAN";
   if (connectionType === "WIRED") return "Wired";
-  if (connectionType === "WIFI") return "Wi-Fi";
   return "—";
 }
 

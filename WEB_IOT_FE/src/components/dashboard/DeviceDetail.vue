@@ -118,7 +118,6 @@ function connectionLabel(
 
   if (m.includes("eth") || m.includes("ethernet") || uid.includes("eth"))
     return "Wired";
-  if (m.includes("wifi") || uid.includes("wifi")) return "Wi-Fi";
   if (uid.includes("lpwan") || m.includes("lora") || m.includes("lpwan"))
     return "LPWAN";
 
@@ -144,7 +143,6 @@ const powerW = computed(() => {
   if (type.includes("air") || type.includes("ac")) return d.acOn ? 1200 : 0;
   if (type.includes("light")) return d.lightOn ? 9 : 0;
 
-  if (uid === "WIFI_001") return 0.8;
   if (uid === "CAMERA_ETH_001") return 6;
   if (uid === "LPWAN_001") return 0.2;
   if (uid.startsWith("LPWAN_")) return 0.2;
@@ -175,7 +173,7 @@ const lpwanUplinkEnabled = computed(() => {
   const d = device.value;
   if (!d) return false;
 
-  return store.lpwanUplinkEnabledByDeviceId[d.id] ?? d.status !== "OFFLINE";
+  return store.lpwanUplinkEnabledByDeviceId[d.id] ?? (d.isEnabled !== false);
 });
 
 const lpwanControlBusy = computed(() => {
@@ -398,6 +396,10 @@ const activityCount = computed(() => {
 
 const unreadAlertCount = computed(() => {
   return alertHistory.value.filter((a) => !a.isRead).length;
+});
+
+const visibleAlertHistory = computed(() => {
+  return alertHistory.value.filter((a) => !a.isRead);
 });
 
 const activityTitle = computed(() => {
@@ -1566,11 +1568,14 @@ onBeforeUnmount(() => {
           {{ alertError }}
         </p>
 
-        <div class="divide-y divide-slate-100">
+        <div
+          class="max-h-[30rem] space-y-3 overflow-y-auto p-4"
+          :class="visibleAlertHistory.length > 0 ? 'bg-slate-50/60' : ''"
+        >
           <div
-            v-for="alert in alertHistory"
+            v-for="alert in visibleAlertHistory"
             :key="alert.id"
-            class="px-6 py-4"
+            class="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
           >
             <div
               class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"
@@ -1584,14 +1589,9 @@ onBeforeUnmount(() => {
                     {{ alert.severity }}
                   </span>
                   <span
-                    class="rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset"
-                    :class="
-                      alert.isRead
-                        ? 'bg-slate-100 text-slate-600 ring-slate-200'
-                        : 'bg-blue-50 text-blue-700 ring-blue-200'
-                    "
+                    class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 ring-1 ring-inset ring-blue-200"
                   >
-                    {{ alert.isRead ? "READ" : "UNREAD" }}
+                    UNREAD
                   </span>
                 </div>
 
@@ -1609,7 +1609,6 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="rounded-xl bg-slate-900 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="alert.isRead"
                 @click="markAlertRead(alert)"
               >
                 Mark read
@@ -1618,10 +1617,10 @@ onBeforeUnmount(() => {
           </div>
 
           <p
-            v-if="alertHistory.length === 0"
-            class="px-6 py-8 text-center text-sm text-slate-500"
+            v-if="visibleAlertHistory.length === 0"
+            class="rounded-2xl bg-white px-6 py-8 text-center text-sm text-slate-500"
           >
-            No alerts recorded for this device yet.
+            No unread alerts for this device.
           </p>
         </div>
       </section>

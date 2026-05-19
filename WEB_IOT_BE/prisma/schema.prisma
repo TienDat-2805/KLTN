@@ -15,7 +15,6 @@ enum DeviceStatus {
 }
 
 enum ConnectionType {
-  WIFI
   WIRED
   LPWAN
 }
@@ -71,7 +70,7 @@ model Device {
   name  String @default("")
 
   // Connection/network metadata
-  connectionType ConnectionType   @default(WIFI) @map("connection_type")
+  connectionType ConnectionType   @default(WIRED) @map("connection_type")
   networkType    NetworkType?     @map("network_type")
   joinStatus     DeviceJoinStatus @default(UNCLAIMED) @map("join_status")
 
